@@ -9,6 +9,7 @@ import { Boom } from '@hapi/boom';
 import dotenv from 'dotenv';
 import readline from 'readline';
 import keepAlive from './keep-alive.js';
+import { startServer } from './server.js'; // 👈 LINHA ADICIONADA
 
 // Importa configurações e serviços
 import { validateGroqConfig } from './config/groq.js';
@@ -31,13 +32,13 @@ const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
  */
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔════════════════════════════════════════════════════════════════╗');
-  console.log('\x1b[36m%s\x1b[0m', '║                                                                ║');
-  console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖            ║');
-  console.log('\x1b[36m%s\x1b[0m', '║                                                                ║');
-  console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                    ║');
-  console.log('\x1b[36m%s\x1b[0m', '║                                                                ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚════════════════════════════════════════════════════════════════╝');
+  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
+  console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
+  console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
+  console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
+  console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
+  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝');
   console.log('');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot Name: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
@@ -51,8 +52,11 @@ function showBanner() {
 async function startBot() {
   showBanner();
   
-if (process.env.RENDER) {
-    keepAlive();
+  // 👇 SEÇÃO MODIFICADA - Inicia servidor HTTP se estiver no Render
+  if (process.env.RENDER) {
+    console.log('🔧 Ambiente Render detectado - iniciando servidor HTTP...');
+    startServer(); // Inicia servidor Express
+    keepAlive(); // Ativa keep-alive
   }
   
   // Valida configuração da Groq
@@ -94,11 +98,11 @@ if (process.env.RENDER) {
       
       // Mostra QR Code
       if (qr) {
-        console.log('\n📱 ══════════════════════════════════════════════════════════');
+        console.log('\n📱 ═══════════════════════════════════════════════════════');
         console.log('📱 ESCANEIE O QR CODE ABAIXO COM SEU WHATSAPP BUSINESS');
-        console.log('📱 ══════════════════════════════════════════════════════════\n');
+        console.log('📱 ═══════════════════════════════════════════════════════\n');
         qrcode.generate(qr, { small: true });
-        console.log('\n📱 ══════════════════════════════════════════════════════════\n');
+        console.log('\n📱 ═══════════════════════════════════════════════════════\n');
       }
       
       // Conexão fechada
@@ -119,9 +123,9 @@ if (process.env.RENDER) {
       // Conectado
       if (connection === 'open') {
         log('SUCCESS', '✅ Conectado ao WhatsApp com sucesso!');
-        console.log('\n🎉 ══════════════════════════════════════════════════════════');
+        console.log('\n🎉 ═══════════════════════════════════════════════════════');
         console.log('🎉 BOT ONLINE E FUNCIONANDO!');
-        console.log('🎉 ══════════════════════════════════════════════════════════\n');
+        console.log('🎉 ═══════════════════════════════════════════════════════\n');
         
         // Mostra estatísticas
         printStats();
