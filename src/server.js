@@ -4,6 +4,9 @@ import { getStats } from './services/database.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Garante que não há conflito de porta
+let server = null;
+
 // Middleware para JSON
 app.use(express.json());
 
@@ -81,12 +84,27 @@ app.use((req, res) => {
  * Inicia o servidor HTTP
  */
 export function startServer() {
-  app.listen(PORT, '0.0.0.0', () => {
+  // Previne múltiplas inicializações
+  if (server) {
+    console.log('⚠️  Servidor HTTP já está rodando');
+    return app;
+  }
+
+  server = app.listen(PORT, '0.0.0.0', () => {
     console.log('\n🌐 ════════════════════════════════════════════════');
     console.log(`🌐 Servidor HTTP iniciado na porta ${PORT}`);
     console.log(`🌐 Health Check: http://localhost:${PORT}/health`);
     console.log(`🌐 API Stats: http://localhost:${PORT}/api/stats`);
     console.log('🌐 ════════════════════════════════════════════════\n');
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`❌ Porta ${PORT} já está em uso!`);
+      console.error('💡 Aguarde alguns segundos e tente novamente...');
+      process.exit(1);
+    } else {
+      console.error('❌ Erro ao iniciar servidor:', err.message);
+      throw err;
+    }
   });
   
   return app;
