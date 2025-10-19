@@ -1,7 +1,7 @@
 import https from 'https';
 
 // URL do seu app no Render (você vai obter após deploy)
-const RENDER_URL = process.env.RENDER_URL || 'https://seu-app.onrender.com';
+const RENDER_URL = process.env.RENDER_URL || 'https://whatsapp-bot-stream.onrender.com';
 
 /**
  * Faz ping a cada 10 minutos para manter o bot acordado
