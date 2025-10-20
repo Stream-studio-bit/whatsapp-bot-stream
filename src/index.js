@@ -23,7 +23,7 @@ dotenv.config();
 /**
  * CONFIGURAÇÕES GLOBAIS
  */
-const SESSION_PATH = './auth_info_baileys';
+const SESSION_PATH = process.env.SESSION_PATH || './auth_info_baileys';
 const BOT_NAME = process.env.BOT_NAME || 'Assistente Stream Studio';
 const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
 
