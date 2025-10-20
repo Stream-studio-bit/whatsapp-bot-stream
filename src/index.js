@@ -1,15 +1,18 @@
 import makeWASocket, { 
   DisconnectReason, 
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  BufferJSON,
+  initAuthCreds,
+  proto
 } from '@whiskeysockets/baileys';
+import { MongoClient } from 'mongodb';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { Boom } from '@hapi/boom';
 import dotenv from 'dotenv';
 import readline from 'readline';
 import keepAlive from './keep-alive.js';
-import { startServer } from './server.js'; // 👈 LINHA ADICIONADA
+import { startServer } from './server.js';
 
 // Importa configurações e serviços
 import { validateGroqConfig } from './config/groq.js';
@@ -23,7 +26,8 @@ dotenv.config();
 /**
  * CONFIGURAÇÕES GLOBAIS
  */
-const SESSION_PATH = process.env.SESSION_PATH || './auth_info_baileys';
+const MONGODB_URI = process.env.MONGODB_URI;
+const SESSION_ID = process.env.SESSION_ID || 'stream-studio-bot';
 const BOT_NAME = process.env.BOT_NAME || 'Assistente Stream Studio';
 const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
 
@@ -32,18 +36,94 @@ const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
  */
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔═══════════════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝');
+  console.log('\x1b[36m%s\x1b[0m', '╚═══════════════════════════════════════════════════════════════╝');
   console.log('');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot Name: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
-  console.log('\x1b[33m%s\x1b[0m', `⚙️  Powered by: Baileys + Groq AI`);
+  console.log('\x1b[33m%s\x1b[0m', `⚙️  Powered by: Baileys + Groq AI + MongoDB`);
   console.log('');
+}
+
+/**
+ * Função para usar MongoDB como auth state
+ */
+async function useMongoDBAuthState(collection) {
+  // Lê as credenciais do MongoDB
+  const readCreds = async () => {
+    const data = await collection.findOne({ _id: 'creds' });
+    return data ? JSON.parse(JSON.stringify(data.value), BufferJSON.reviver) : null;
+  };
+
+  // Lê uma chave específica
+  const readKey = async (id) => {
+    const data = await collection.findOne({ _id: id });
+    return data ? JSON.parse(JSON.stringify(data.value), BufferJSON.reviver) : null;
+  };
+
+  // Escreve dados no MongoDB
+  const writeData = async (id, value) => {
+    const data = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
+    await collection.updateOne(
+      { _id: id },
+      { $set: { value: data } },
+      { upsert: true }
+    );
+  };
+
+  // Remove dados do MongoDB
+  const removeData = async (id) => {
+    await collection.deleteOne({ _id: id });
+  };
+
+  // Carrega credenciais existentes ou cria novas
+  let creds = await readCreds();
+  if (!creds) {
+    creds = initAuthCreds();
+    await writeData('creds', creds);
+  }
+
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          for (const id of ids) {
+            let value = await readKey(`${type}-${id}`);
+            if (value) {
+              data[id] = value;
+            }
+          }
+          return data;
+        },
+        set: async (data) => {
+          for (const category in data) {
+            for (const id in data[category]) {
+              const value = data[category][id];
+              const key = `${category}-${id}`;
+              if (value) {
+                await writeData(key, value);
+              } else {
+                await removeData(key);
+              }
+            }
+          }
+        }
+      }
+    },
+    saveCreds: async () => {
+      await writeData('creds', creds);
+    },
+    clearAll: async () => {
+      await collection.deleteMany({});
+    }
+  };
 }
 
 /**
@@ -52,11 +132,11 @@ function showBanner() {
 async function startBot() {
   showBanner();
   
-  // 👇 SEÇÃO MODIFICADA - Inicia servidor HTTP se estiver no Render
+  // Inicia servidor HTTP se estiver no Render
   if (process.env.RENDER) {
     console.log('🔧 Ambiente Render detectado - iniciando servidor HTTP...');
-    startServer(); // Inicia servidor Express
-    keepAlive(); // Ativa keep-alive
+    startServer();
+    keepAlive();
   }
   
   // Valida configuração da Groq
@@ -65,15 +145,33 @@ async function startBot() {
     process.exit(1);
   }
   
+  // Valida MONGODB_URI
+  if (!MONGODB_URI) {
+    console.error('\n❌ Configure MONGODB_URI no arquivo .env antes de continuar!\n');
+    process.exit(1);
+  }
+  
   log('INFO', '🔄 Iniciando conexão com WhatsApp...');
+  
+  let mongoClient;
   
   try {
     // Obtém versão mais recente do Baileys
     const { version, isLatest } = await fetchLatestBaileysVersion();
     log('SUCCESS', `✅ Baileys v${version.join('.')} ${isLatest ? '(latest)' : '(outdated)'}`);
     
-    // Carrega estado de autenticação
-    const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
+    // Conecta ao MongoDB
+    log('INFO', '🔗 Conectando ao MongoDB...');
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    
+    const db = mongoClient.db('baileys_auth');
+    const collection = db.collection(SESSION_ID);
+    
+    log('SUCCESS', '✅ MongoDB conectado com sucesso!');
+    
+    // Usa MongoDB para auth state
+    const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
     
     // Cria socket de conexão
     const sock = makeWASocket({
@@ -115,7 +213,9 @@ async function startBot() {
           log('WARNING', '⚠️  Conexão perdida. Reconectando...');
           setTimeout(() => startBot(), 3000);
         } else {
-          log('ERROR', '❌ Desconectado. Execute novamente para reconectar.');
+          log('ERROR', '❌ Desconectado. Limpando credenciais...');
+          await clearAll();
+          await mongoClient.close();
           process.exit(0);
         }
       }
@@ -194,6 +294,9 @@ async function startBot() {
   } catch (error) {
     log('ERROR', `❌ Erro ao iniciar bot: ${error.message}`);
     console.error(error);
+    if (mongoClient) {
+      await mongoClient.close();
+    }
     process.exit(1);
   }
 }
