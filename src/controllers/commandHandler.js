@@ -11,6 +11,7 @@ import {
   unblockBotForUser,
   isBotBlockedForUser,
   getUser,
+  updateUser,
   getStats,
   printStats,
   getAllUsers,
@@ -68,6 +69,10 @@ export async function handleCommand(sock, message) {
     // ============================================
     if (command === 'ASSUME') {
       blockBotForUser(jid);
+      
+      // 🔧 NOVO: Registra o momento do bloqueio
+      const now = new Date();
+      updateUser(jid, { blockedAt: now });
       
       const user = getUser(jid);
       const userName = user?.name || 'Cliente';
@@ -160,6 +165,10 @@ export async function handleOwnerMessage(sock, message) {
     // ============================================
     blockBotForUser(jid);
     
+    // 🔧 NOVO: Registra o momento do bloqueio
+    const now = new Date();
+    updateUser(jid, { blockedAt: now });
+    
     const user = getUser(jid);
     const userName = user?.name || 'Cliente';
     
@@ -195,16 +204,16 @@ export function listBlockedUsers() {
     return;
   }
   
-  console.log('\n🚫 ═══════════════════════════════════════════');
+  console.log('\n🚫 ╔═══════════════════════════════════════════╗');
   console.log('🚫 USUÁRIOS EM ATENDIMENTO MANUAL');
-  console.log('🚫 ═══════════════════════════════════════════');
+  console.log('🚫 ╚═══════════════════════════════════════════╝');
   
   blocked.forEach((user, index) => {
     const blockedTime = new Date(user.blockedAt).toLocaleString('pt-BR');
     console.log(`${index + 1}. ${user.phone} - Bloqueado em: ${blockedTime}`);
   });
   
-  console.log('🚫 ═══════════════════════════════════════════\n');
+  console.log('🚫 ╚═══════════════════════════════════════════╝\n');
 }
 
 /**
@@ -218,9 +227,9 @@ export function listAllUsers() {
     return;
   }
   
-  console.log('\n👥 ═══════════════════════════════════════════');
+  console.log('\n👥 ╔═══════════════════════════════════════════╗');
   console.log('👥 TODOS OS USUÁRIOS');
-  console.log('👥 ═══════════════════════════════════════════');
+  console.log('👥 ╚═══════════════════════════════════════════╝');
   
   users.forEach((user, index) => {
     const type = user.isNewLead ? '🎯 LEAD' : '🔄 CLIENTE';
@@ -231,7 +240,7 @@ export function listAllUsers() {
     console.log('');
   });
   
-  console.log('👥 ═══════════════════════════════════════════\n');
+  console.log('👥 ╚═══════════════════════════════════════════╝\n');
 }
 
 export default {

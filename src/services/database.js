@@ -31,6 +31,7 @@ const manualAttendanceCache = new NodeCache({
  * @property {Date} lastInteraction - Data da última interação
  * @property {boolean} isNewLead - Se é um lead interessado no bot
  * @property {number} messageCount - Contador de mensagens
+ * @property {Date|null} blockedAt - Data/hora do bloqueio (se em atendimento manual)
  */
 
 /**
@@ -48,7 +49,8 @@ export function saveUser(jid, data = {}) {
     firstInteraction: existing?.firstInteraction || new Date(),
     lastInteraction: new Date(),
     isNewLead: data.isNewLead !== undefined ? data.isNewLead : existing?.isNewLead || false,
-    messageCount: (existing?.messageCount || 0) + 1
+    messageCount: (existing?.messageCount || 0) + 1,
+    blockedAt: data.blockedAt !== undefined ? data.blockedAt : existing?.blockedAt || null
   };
   
   userCache.set(phone, userData);
@@ -61,13 +63,54 @@ export function saveUser(jid, data = {}) {
 }
 
 /**
+ * 🔧 NOVA FUNÇÃO: Atualiza dados do usuário sem incrementar messageCount
+ * @param {string} jid - JID do WhatsApp
+ * @param {Object} data - Dados para atualizar
+ * @returns {UserData|null}
+ */
+export function updateUser(jid, data = {}) {
+  const phone = extractPhoneNumber(jid);
+  const existing = userCache.get(phone);
+  
+  if (!existing) {
+    log('WARNING', `⚠️ Tentativa de atualizar usuário inexistente: ${phone}`);
+    return null;
+  }
+  
+  const userData = {
+    ...existing,
+    ...data,
+    // Garante que messageCount não seja sobrescrito acidentalmente
+    messageCount: data.messageCount !== undefined ? data.messageCount : existing.messageCount
+  };
+  
+  userCache.set(phone, userData);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `🔄 Usuário atualizado: ${userData.name} (${phone})`);
+  }
+  
+  return userData;
+}
+
+/**
  * Busca dados do usuário
  * @param {string} jid - JID do WhatsApp
  * @returns {UserData|null}
  */
 export function getUser(jid) {
   const phone = extractPhoneNumber(jid);
-  return userCache.get(phone) || null;
+  const user = userCache.get(phone);
+  
+  if (!user) return null;
+  
+  // 🔧 MELHORIA: Sincroniza blockedAt do cache de atendimento manual
+  const manualAttendance = manualAttendanceCache.get(phone);
+  if (manualAttendance?.blockedAt) {
+    user.blockedAt = manualAttendance.blockedAt;
+  }
+  
+  return user;
 }
 
 /**
@@ -132,10 +175,19 @@ export function isLeadUser(jid) {
  */
 export function blockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
+  const blockedAt = new Date();
+  
   manualAttendanceCache.set(phone, {
-    blockedAt: new Date(),
+    blockedAt: blockedAt,
     blockedBy: process.env.OWNER_NAME || 'Roberto'
   });
+  
+  // 🔧 MELHORIA: Sincroniza blockedAt no userCache também
+  const user = userCache.get(phone);
+  if (user) {
+    user.blockedAt = blockedAt;
+    userCache.set(phone, user);
+  }
   
   log('WARNING', `🚫 Bot bloqueado para: ${phone} (atendimento manual)`);
 }
@@ -147,6 +199,13 @@ export function blockBotForUser(jid) {
 export function unblockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
   manualAttendanceCache.del(phone);
+  
+  // 🔧 MELHORIA: Remove blockedAt do userCache também
+  const user = userCache.get(phone);
+  if (user) {
+    user.blockedAt = null;
+    userCache.set(phone, user);
+  }
   
   log('SUCCESS', `✅ Bot liberado para: ${phone} (automático novamente)`);
 }
@@ -256,18 +315,19 @@ export function exportData() {
 export function printStats() {
   const stats = getStats();
   
-  console.log('\n📊 ═══════════════════════════════════════════');
+  console.log('\n📊 ╔═══════════════════════════════════════════╗');
   console.log('📊 ESTATÍSTICAS DO BOT');
-  console.log('📊 ═══════════════════════════════════════════');
+  console.log('📊 ╚═══════════════════════════════════════════╝');
   console.log(`👥 Total de usuários: ${stats.totalUsers}`);
   console.log(`🎯 Novos leads: ${stats.newLeads}`);
   console.log(`🔄 Clientes recorrentes: ${stats.returningClients}`);
   console.log(`🚫 Em atendimento manual: ${stats.usersInManualAttendance}`);
-  console.log('📊 ═══════════════════════════════════════════\n');
+  console.log('📊 ╚═══════════════════════════════════════════╝\n');
 }
 
 export default {
   saveUser,
+  updateUser,
   getUser,
   isExistingUser,
   hasOngoingConversation,

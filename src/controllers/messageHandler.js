@@ -18,7 +18,8 @@ import {
   hasOngoingConversation,
   markAsNewLead,
   isLeadUser,
-  isBotBlockedForUser
+  isBotBlockedForUser,
+  unblockBotForUser
 } from '../services/database.js';
 
 import {
@@ -59,6 +60,18 @@ export async function handleIncomingMessage(sock, message) {
     // ============================================
     // VERIFICAÇÃO 1: BOT BLOQUEADO? (Atendimento Manual)
     // ============================================
+    
+    // 🔧 NOVO: Verifica se o bloqueio expirou (1 hora de inatividade)
+    const user = getUser(jid);
+    if (user?.blockedAt) {
+      const now = new Date();
+      const diffMinutes = (now - new Date(user.blockedAt)) / 1000 / 60;
+      if (diffMinutes > 60) {
+        unblockBotForUser(jid);
+        log('INFO', `🤖 Bot reativado automaticamente para ${pushName} após 1h sem interação`);
+      }
+    }
+    
     if (isBotBlockedForUser(jid)) {
       log('WARNING', `🚫 Bot bloqueado para ${pushName} - Atendimento manual ativo`);
       return; // Não responde - Roberto está atendendo
