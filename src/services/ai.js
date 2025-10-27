@@ -60,6 +60,56 @@ export function clearConversationHistory(phone) {
 }
 
 /**
+ * 🔥 NOVO: Gera instruções de contextualização dinâmicas
+ * @param {boolean} isFirstMessage - Se é a primeira mensagem
+ * @param {string} customerName - Nome do cliente
+ * @returns {string}
+ */
+function getContextInstructions(isFirstMessage, customerName) {
+  if (isFirstMessage) {
+    return `
+## 📍 CONTEXTO ATUAL:
+Esta é a **PRIMEIRA MENSAGEM** do cliente ${customerName}.
+
+**VOCÊ DEVE:**
+✅ Cumprimentar o cliente pelo nome
+✅ Se apresentar como Assistente Virtual da Stream Studio
+✅ Ser caloroso e acolhedor
+
+**EXEMPLO:**
+"Olá ${customerName}! 👋 Sou o Assistente Virtual da Stream Studio..."
+`;
+  } else {
+    return `
+## 📍 CONTEXTO ATUAL:
+Esta é uma **CONTINUAÇÃO** de conversa com ${customerName}.
+
+**HISTÓRICO DISPONÍVEL:**
+O histórico completo está acima. Leia TODO o histórico antes de responder.
+
+**VOCÊ DEVE:**
+✅ Continuar naturalmente a partir do contexto anterior
+✅ Referenciar informações já mencionadas
+✅ Ser progressivo: cada resposta avança a conversa
+✅ NÃO repetir informações já fornecidas
+
+**VOCÊ NÃO DEVE:**
+❌ Cumprimentar novamente ("Olá", "Oi", etc.)
+❌ Se reapresentar
+❌ Repetir informações do histórico
+❌ Recomeçar a conversa do zero
+
+**EXEMPLO CORRETO:**
+Cliente: "Qual o preço?"
+Você: "O bot está em promoção: R$ 499,00..." ← ✅ Direto ao ponto
+
+Cliente: "Posso parcelar?"
+Você: "Sim! Você pode parcelar em até 5x..." ← ✅ Continua naturalmente
+`;
+  }
+}
+
+/**
  * Processa mensagem com a IA para NOVO LEAD (interessado no bot)
  * @param {string} phone - Número do telefone
  * @param {string} customerName - Nome do cliente
@@ -73,11 +123,43 @@ export async function processLeadMessage(phone, customerName, userMessage) {
     // Obtém histórico
     const history = getConversationHistory(phone);
     
+    // 🔥 NOVO: Verifica se é primeira mensagem
+    const isFirstMessage = history.length === 0;
+    
+    log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+    
+    // System prompt base
+    const baseSystemPrompt = getSystemPromptForCustomer(customerName);
+    
+    // 🔥 NOVO: Adiciona instruções de contextualização
+    const contextInstructions = getContextInstructions(isFirstMessage, customerName);
+    
+    // System prompt completo
+    const fullSystemPrompt = `${baseSystemPrompt}
+
+${contextInstructions}
+
+## 🎯 REGRAS DE SAUDAÇÃO:
+
+**QUANDO SAUDAR:**
+✅ Apenas na primeira mensagem (histórico vazio)
+✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia")
+
+**QUANDO NÃO SAUDAR:**
+❌ Em qualquer continuação de conversa
+❌ Quando cliente faz pergunta direta
+❌ Quando já cumprimentou antes no histórico
+
+**IMPORTANTE:**
+- Se há histórico, NÃO cumprimente novamente
+- Continue a conversa naturalmente
+- Faça referência ao que já foi discutido`;
+    
     // Monta array de mensagens
     const messages = [
       {
         role: 'system',
-        content: getSystemPromptForCustomer(customerName)
+        content: fullSystemPrompt
       },
       ...history,
       {
@@ -93,7 +175,7 @@ export async function processLeadMessage(phone, customerName, userMessage) {
     addToHistory(phone, 'user', userMessage);
     addToHistory(phone, 'assistant', aiResponse);
     
-    log('SUCCESS', `✅ Resposta gerada para ${customerName}`);
+    log('SUCCESS', `✅ Resposta gerada para ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'})`);
     
     return aiResponse;
     
@@ -116,6 +198,17 @@ export async function processClientMessage(phone, customerName, userMessage) {
     
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     
+    // Obtém histórico
+    const history = getConversationHistory(phone);
+    
+    // 🔥 NOVO: Verifica se é primeira mensagem
+    const isFirstMessage = history.length === 0;
+    
+    log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+    
+    // 🔥 NOVO: Adiciona instruções de contextualização
+    const contextInstructions = getContextInstructions(isFirstMessage, customerName);
+    
     // System prompt para clientes existentes (mais genérico)
     const systemPrompt = `Você é o Assistente Virtual da Stream Studio.
 
@@ -136,10 +229,26 @@ Sua função é:
 - Use um tom amigável mas profissional
 
 **CONTATO:**
-WhatsApp do Roberto: ${process.env.WHATSAPP_SUPPORT}`;
+WhatsApp do Roberto: ${process.env.WHATSAPP_SUPPORT}
 
-    // Obtém histórico
-    const history = getConversationHistory(phone);
+${contextInstructions}
+
+## 🎯 REGRAS DE SAUDAÇÃO:
+
+**QUANDO SAUDAR:**
+✅ Apenas na primeira mensagem (histórico vazio)
+✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia")
+
+**QUANDO NÃO SAUDAR:**
+❌ Em qualquer continuação de conversa
+❌ Quando cliente faz pergunta direta
+❌ Quando já cumprimentou antes no histórico
+
+**USO DO HISTÓRICO:**
+- SEMPRE leia TODO o histórico antes de responder
+- Não repita informações já fornecidas
+- Faça referência ao que já foi discutido
+- Seja progressivo: cada resposta avança a conversa`;
     
     // Monta array de mensagens
     const messages = [
@@ -161,7 +270,7 @@ WhatsApp do Roberto: ${process.env.WHATSAPP_SUPPORT}`;
     addToHistory(phone, 'user', userMessage);
     addToHistory(phone, 'assistant', aiResponse);
     
-    log('SUCCESS', `✅ Resposta gerada para cliente ${customerName}`);
+    log('SUCCESS', `✅ Resposta gerada para cliente ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'})`);
     
     return aiResponse;
     
@@ -224,6 +333,7 @@ export function shouldSendFanpageLink(message) {
     'fanpage',
     'site',
     'página',
+    'pagina',
     'demonstração',
     'demonstracao',
     'ver mais',

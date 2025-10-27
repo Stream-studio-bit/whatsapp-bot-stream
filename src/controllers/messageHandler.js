@@ -7,8 +7,7 @@ import {
   simulateTyping,
   log,
   extractPhoneNumber,
-  isBusinessHours,
-  getBusinessHoursMessage
+  parseCommand
 } from '../utils/helpers.js';
 
 import {
@@ -19,6 +18,7 @@ import {
   markAsNewLead,
   isLeadUser,
   isBotBlockedForUser,
+  blockBotForUser,
   unblockBotForUser
 } from '../services/database.js';
 
@@ -32,12 +32,64 @@ import {
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 
 /**
+ * Processa comandos do sistema (/assumir e /liberar)
+ * @returns {boolean} true se foi um comando, false se não
+ */
+async function handleCommand(sock, message) {
+  try {
+    const jid = message.key.remoteJid;
+    const phone = extractPhoneNumber(jid);
+    const messageText = extractMessageText(message);
+    
+    if (!messageText) return false;
+    
+    const { isCommand, command } = parseCommand(messageText);
+    
+    if (!isCommand) return false;
+    
+    const pushName = message.pushName || 'Roberto';
+    
+    // Comando: /assumir (Bloqueia bot)
+    if (command === 'ASSUME') {
+      blockBotForUser(jid);
+      log('SUCCESS', `🔒 Bot BLOQUEADO para ${pushName} - Atendimento manual ativo`);
+      
+      await sock.sendMessage(jid, { 
+        text: `✅ *Atendimento assumido!*\n\nO bot foi pausado. Você está em atendimento manual.\n\n💡 Para reativar o bot, envie: */liberar*` 
+      });
+      
+      return true;
+    }
+    
+    // Comando: /liberar (Desbloqueia bot)
+    if (command === 'RELEASE') {
+      unblockBotForUser(jid);
+      log('SUCCESS', `🤖 Bot LIBERADO para ${pushName} - IA reativada`);
+      
+      await sock.sendMessage(jid, { 
+        text: `✅ *Bot liberado!*\n\nO atendimento automático foi reativado.\n\n🤖 A IA voltará a responder normalmente.` 
+      });
+      
+      return true;
+    }
+    
+    return false;
+    
+  } catch (error) {
+    log('ERROR', `❌ Erro ao processar comando: ${error.message}`);
+    return false;
+  }
+}
+
+/**
  * HANDLER PRINCIPAL DE MENSAGENS
  * Processa todas as mensagens recebidas e decide a ação
  */
 export async function handleIncomingMessage(sock, message) {
   try {
-    // Valida se é uma mensagem processável
+    // ============================================
+    // PASSO 1: Valida se é uma mensagem processável
+    // ============================================
     if (!isValidMessage(message)) {
       return;
     }
@@ -51,17 +103,22 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     const cleanedMessage = cleanMessage(messageText);
-    
-    // Obtém nome do contato
     const pushName = message.pushName || 'Cliente';
     
     log('INFO', `📩 Mensagem recebida de ${pushName} (${phone}): "${cleanedMessage}"`);
 
     // ============================================
-    // VERIFICAÇÃO 1: BOT BLOQUEADO? (Atendimento Manual)
+    // PASSO 2: PROCESSA COMANDOS PRIMEIRO (PRIORIDADE MÁXIMA)
     // ============================================
-    
-    // 🔧 NOVO: Verifica se o bloqueio expirou (1 hora de inatividade)
+    const isCommandProcessed = await handleCommand(sock, message);
+    if (isCommandProcessed) {
+      log('INFO', `⚙️ Comando processado para ${pushName}`);
+      return; // Comando executado, não continua processamento
+    }
+
+    // ============================================
+    // PASSO 3: Verifica expiração de bloqueio (1 hora)
+    // ============================================
     const user = getUser(jid);
     if (user?.blockedAt) {
       const now = new Date();
@@ -71,22 +128,23 @@ export async function handleIncomingMessage(sock, message) {
         log('INFO', `🤖 Bot reativado automaticamente para ${pushName} após 1h sem interação`);
       }
     }
-    
+
+    // ============================================
+    // PASSO 4: Verifica se bot está bloqueado
+    // ============================================
     if (isBotBlockedForUser(jid)) {
       log('WARNING', `🚫 Bot bloqueado para ${pushName} - Atendimento manual ativo`);
       return; // Não responde - Roberto está atendendo
     }
 
     // ============================================
-    // VERIFICAÇÃO 2: NOVO LEAD? (Interessado no bot)
+    // PASSO 5: NOVO LEAD? (Interessado no bot)
     // ============================================
     if (isNewLead(cleanedMessage)) {
       log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName}`);
       
-      // Marca como lead
       markAsNewLead(jid, pushName);
       
-      // Envia boas-vindas
       await simulateTyping(sock, jid, 2000);
       const welcomeMsg = await generateWelcomeMessage(pushName, true);
       await sock.sendMessage(jid, { text: welcomeMsg });
@@ -96,20 +154,17 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ============================================
-    // VERIFICAÇÃO 3: LEAD CONHECIDO? (Continuação)
+    // PASSO 6: LEAD CONHECIDO? (Continuação)
     // ============================================
     if (isLeadUser(jid)) {
       log('INFO', `🎯 Mensagem de LEAD existente: ${pushName}`);
       
-      // Atualiza última interação
       saveUser(jid, { name: pushName });
       
-      // Processa com IA especializada em vendas
       await simulateTyping(sock, jid, 3000);
       const aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
       await sock.sendMessage(jid, { text: aiResponse });
       
-      // Se mencionou fanpage, envia link
       if (shouldSendFanpageLink(cleanedMessage)) {
         await simulateTyping(sock, jid, 1500);
         await sock.sendMessage(jid, { text: FANPAGE_MESSAGE });
@@ -120,20 +175,17 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ============================================
-    // VERIFICAÇÃO 4: CLIENTE EXISTENTE COM CONVERSA ATIVA
+    // PASSO 7: CLIENTE EXISTENTE COM CONVERSA ATIVA
     // ============================================
     if (isExistingUser(jid) && hasOngoingConversation(jid)) {
       const user = getUser(jid);
-      log('INFO', `🔄 Cliente RECORRENTE: ${user.name} (última msg: ${user.lastInteraction.toLocaleDateString()})`);
+      log('INFO', `🔄 Cliente RECORRENTE: ${user.name}`);
       
-      // Se é uma saudação inicial
       if (isGreeting(cleanedMessage)) {
         log('INFO', `👋 Saudação detectada de cliente recorrente: ${user.name}`);
         
-        // Atualiza última interação
         saveUser(jid, { name: pushName });
         
-        // Envia boas-vindas para cliente
         await simulateTyping(sock, jid, 2000);
         const welcomeMsg = await generateWelcomeMessage(user.name, false);
         await sock.sendMessage(jid, { text: welcomeMsg });
@@ -142,7 +194,6 @@ export async function handleIncomingMessage(sock, message) {
         return;
       }
       
-      // Conversa em andamento - processa com IA
       saveUser(jid, { name: pushName });
       
       await simulateTyping(sock, jid, 2500);
@@ -154,14 +205,12 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ============================================
-    // VERIFICAÇÃO 5: PRIMEIRO CONTATO ou CONVERSA ANTIGA
+    // PASSO 8: PRIMEIRO CONTATO ou CONVERSA ANTIGA
     // ============================================
     log('INFO', `🆕 Primeiro contato ou conversa antiga: ${pushName}`);
     
-    // Salva novo usuário
     saveUser(jid, { name: pushName, isNewLead: false });
     
-    // Se é uma saudação
     if (isGreeting(cleanedMessage)) {
       await simulateTyping(sock, jid, 2000);
       const welcomeMsg = await generateWelcomeMessage(pushName, false);
@@ -171,7 +220,6 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
     
-    // Se não é saudação, processa com IA
     await simulateTyping(sock, jid, 2500);
     const aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
     await sock.sendMessage(jid, { text: aiResponse });
@@ -185,57 +233,11 @@ export async function handleIncomingMessage(sock, message) {
 }
 
 /**
- * Handler para mensagens fora do horário comercial
- */
-export async function handleOutOfHoursMessage(sock, message) {
-  try {
-    if (!isValidMessage(message)) {
-      return;
-    }
-
-    const jid = message.key.remoteJid;
-    const phone = extractPhoneNumber(jid);
-    
-    // Verifica se já enviou mensagem de horário comercial recentemente
-    // Para não enviar múltiplas vezes
-    const user = getUser(jid);
-    if (user && user.lastInteraction) {
-      const now = new Date();
-      const diff = (now - user.lastInteraction) / 1000 / 60; // Minutos
-      
-      // Se enviou mensagem há menos de 30 minutos, não envia novamente
-      if (diff < 30) {
-        return;
-      }
-    }
-    
-    const pushName = message.pushName || 'Cliente';
-    
-    log('WARNING', `🕐 Mensagem fora do horário de ${pushName}`);
-    
-    // Salva interação
-    saveUser(jid, { name: pushName });
-    
-    // Envia mensagem de horário comercial
-    const outOfHoursMsg = getBusinessHoursMessage();
-    await simulateTyping(sock, jid, 2000);
-    await sock.sendMessage(jid, { text: outOfHoursMsg });
-    
-    log('INFO', `✅ Mensagem de horário enviada para ${pushName}`);
-    
-  } catch (error) {
-    log('ERROR', `❌ Erro ao processar mensagem fora do horário: ${error.message}`);
-  }
-}
-
-/**
- * Processa mensagem - AGORA 24/7 SEMPRE ATIVO
+ * Processa mensagem - SEMPRE ATIVO 24/7
  */
 export async function processMessage(sock, message) {
   try {
-    // Bot SEMPRE ativo - sem verificação de horário
     await handleIncomingMessage(sock, message);
-    
   } catch (error) {
     log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
   }
@@ -243,6 +245,5 @@ export async function processMessage(sock, message) {
 
 export default {
   handleIncomingMessage,
-  handleOutOfHoursMessage,
   processMessage
 };
