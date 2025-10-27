@@ -32,6 +32,31 @@ import {
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 
 /**
+ * 🔐 Verifica se o número é do dono (Roberto)
+ * @param {string} jid - JID do WhatsApp
+ * @returns {boolean}
+ */
+function isOwner(jid) {
+  const phone = extractPhoneNumber(jid);
+  const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, ''); // Remove não-numéricos
+  
+  if (!ownerPhone) {
+    log('WARNING', '⚠️ OWNER_PHONE não configurado no .env - Comandos desabilitados!');
+    return false;
+  }
+  
+  // Compara números sem formatação
+  const cleanPhone = phone.replace(/\D/g, '');
+  const isOwnerUser = cleanPhone === ownerPhone || cleanPhone.endsWith(ownerPhone);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `🔍 Verificação de owner: ${phone} | Owner: ${ownerPhone} | Match: ${isOwnerUser}`);
+  }
+  
+  return isOwnerUser;
+}
+
+/**
  * Processa comandos do sistema (/assumir e /liberar)
  * @returns {boolean} true se foi um comando, false se não
  */
@@ -47,7 +72,18 @@ async function handleCommand(sock, message) {
     
     if (!isCommand) return false;
     
-    const pushName = message.pushName || 'Roberto';
+    const pushName = message.pushName || 'Usuário';
+    
+    // 🔐 VERIFICAÇÃO DE PERMISSÃO: Apenas o dono pode usar comandos
+    if (!isOwner(jid)) {
+      log('WARNING', `🚫 Tentativa de comando por usuário não autorizado: ${pushName} (${phone})`);
+      
+      await sock.sendMessage(jid, { 
+        text: `❌ Desculpe, apenas o administrador pode usar comandos do sistema.` 
+      });
+      
+      return true; // Retorna true para não processar como mensagem normal
+    }
     
     // Comando: /assumir (Bloqueia bot)
     if (command === 'ASSUME') {
@@ -55,7 +91,7 @@ async function handleCommand(sock, message) {
       log('SUCCESS', `🔒 Bot BLOQUEADO para ${pushName} - Atendimento manual ativo`);
       
       await sock.sendMessage(jid, { 
-        text: `✅ *Atendimento assumido!*\n\nO bot foi pausado. Você está em atendimento manual.\n\n💡 Para reativar o bot, envie: */liberar*` 
+        text: `✅ *Atendimento assumido!*\n\nO bot foi pausado para este número.\nVocê está em atendimento manual.\n\n💡 Para reativar o bot, envie:\n*${process.env.COMMAND_RELEASE || '/liberar'}*` 
       });
       
       return true;
@@ -67,7 +103,7 @@ async function handleCommand(sock, message) {
       log('SUCCESS', `🤖 Bot LIBERADO para ${pushName} - IA reativada`);
       
       await sock.sendMessage(jid, { 
-        text: `✅ *Bot liberado!*\n\nO atendimento automático foi reativado.\n\n🤖 A IA voltará a responder normalmente.` 
+        text: `✅ *Bot liberado!*\n\nO atendimento automático foi reativado para este número.\n\n🤖 A IA voltará a responder normalmente.` 
       });
       
       return true;

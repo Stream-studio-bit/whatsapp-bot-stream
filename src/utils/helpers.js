@@ -79,21 +79,49 @@ export function formatPhoneNumber(phone) {
 }
 
 /**
- * Verifica se é um comando do sistema
+ * 🔥 CORRIGIDO: Verifica se é um comando do sistema
+ * Aceita múltiplas variações de comandos
  * @param {string} message - Mensagem recebida
  * @returns {Object} { isCommand, command }
  */
 export function parseCommand(message) {
   const msg = message.trim().toLowerCase();
   
+  // Comandos do .env
   const commandAssume = (process.env.COMMAND_ASSUME || '/assumir').toLowerCase();
   const commandRelease = (process.env.COMMAND_RELEASE || '/liberar').toLowerCase();
   
-  if (msg === commandAssume || msg === 'assumir atendimento') {
+  // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA ASSUMIR:
+  const assumeVariations = [
+    commandAssume,           // /assumir (do .env)
+    'assumir',              // assumir
+    '/assumir',             // /assumir
+    './assumir',            // ./assumir (caso digitado errado)
+    'assumir atendimento',  // assumir atendimento
+    'assumir atendimento manual',
+    'bloquear bot',
+    'pausar bot'
+  ];
+  
+  // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA LIBERAR:
+  const releaseVariations = [
+    commandRelease,         // /liberar (do .env)
+    'liberar',             // liberar
+    '/liberar',            // /liberar
+    './liberar',           // ./liberar (caso digitado errado)
+    'liberar bot',
+    'reativar bot',
+    'ativar bot',
+    'desbloquear bot'
+  ];
+  
+  // Verifica ASSUMIR
+  if (assumeVariations.some(variation => msg === variation || msg.startsWith(variation + ' '))) {
     return { isCommand: true, command: 'ASSUME' };
   }
   
-  if (msg === commandRelease || msg === 'liberar bot') {
+  // Verifica LIBERAR
+  if (releaseVariations.some(variation => msg === variation || msg.startsWith(variation + ' '))) {
     return { isCommand: true, command: 'RELEASE' };
   }
   
@@ -322,7 +350,7 @@ Eu sou o *Assistente Virtual*, desenvolvido pela *Stream Studio*, e vou iniciar 
 
 Você já possui algum projeto em andamento, ou alguma conversa já iniciada?
 
-✅ *Se sim*, basta aguardar que o Roberto logo irá te atender.
+✅ *Se sim*, basta aguardar que o ${ownerName} logo irá te atender.
 
 ❓ *Se ainda não*, me conte, como posso ajudar?`;
 }
