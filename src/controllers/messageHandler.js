@@ -32,7 +32,7 @@ import {
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 
 /**
- * 🔐 Verifica se o número é do dono (Roberto)
+ * 🔥 MELHORADA: Verifica se o número é do dono (Roberto)
  * @param {string} jid - JID do WhatsApp
  * @returns {boolean}
  */
@@ -45,19 +45,24 @@ function isOwner(jid) {
     return false;
   }
   
-  // Compara números sem formatação
+  // 🔥 CORREÇÃO: Normaliza ambos os números para comparação
   const cleanPhone = phone.replace(/\D/g, '');
+  
+  // Verifica se é exatamente igual OU se termina com o número (compatibilidade com prefixos)
   const isOwnerUser = cleanPhone === ownerPhone || cleanPhone.endsWith(ownerPhone);
   
   if (process.env.DEBUG_MODE === 'true') {
-    log('INFO', `🔍 Verificação de owner: ${phone} | Owner: ${ownerPhone} | Match: ${isOwnerUser}`);
+    log('INFO', `🔍 Verificação de owner:`);
+    log('INFO', `   Telefone recebido: ${phone} (limpo: ${cleanPhone})`);
+    log('INFO', `   Owner configurado: ${ownerPhone}`);
+    log('INFO', `   É owner? ${isOwnerUser ? '✅ SIM' : '❌ NÃO'}`);
   }
   
   return isOwnerUser;
 }
 
 /**
- * Processa comandos do sistema (/assumir e /liberar)
+ * 🔥 MELHORADA: Processa comandos do sistema (/assumir e /liberar)
  * @returns {boolean} true se foi um comando, false se não
  */
 async function handleCommand(sock, message) {
@@ -74,9 +79,11 @@ async function handleCommand(sock, message) {
     
     const pushName = message.pushName || 'Usuário';
     
-    // 🔐 VERIFICAÇÃO DE PERMISSÃO: Apenas o dono pode usar comandos
+    log('INFO', `⚙️ Comando detectado: ${command} de ${pushName} (${phone})`);
+    
+    // 🔥 VERIFICAÇÃO DE PERMISSÃO: Apenas o dono pode usar comandos
     if (!isOwner(jid)) {
-      log('WARNING', `🚫 Tentativa de comando por usuário não autorizado: ${pushName} (${phone})`);
+      log('WARNING', `🚫 Tentativa de comando por usuário NÃO AUTORIZADO: ${pushName} (${phone})`);
       
       await sock.sendMessage(jid, { 
         text: `❌ Desculpe, apenas o administrador pode usar comandos do sistema.` 
@@ -85,25 +92,68 @@ async function handleCommand(sock, message) {
       return true; // Retorna true para não processar como mensagem normal
     }
     
+    log('SUCCESS', `✅ Comando autorizado de owner: ${pushName}`);
+    
+    // ============================================
     // Comando: /assumir (Bloqueia bot)
+    // ============================================
     if (command === 'ASSUME') {
       blockBotForUser(jid);
-      log('SUCCESS', `🔒 Bot BLOQUEADO para ${pushName} - Atendimento manual ativo`);
+      
+      const user = getUser(jid);
+      const userName = user?.name || pushName;
+      
+      log('SUCCESS', `🔒 Bot BLOQUEADO para ${userName} (${phone}) - Atendimento manual ativo`);
       
       await sock.sendMessage(jid, { 
-        text: `✅ *Atendimento assumido!*\n\nO bot foi pausado para este número.\nVocê está em atendimento manual.\n\n💡 Para reativar o bot, envie:\n*${process.env.COMMAND_RELEASE || '/liberar'}*` 
+        text: `✅ *Atendimento assumido!*
+
+🚫 O bot foi pausado para este número.
+👤 Você está em atendimento manual com: *${userName}*
+
+⏰ O bloqueio expirará automaticamente após 1 hora sem mensagens.
+
+💡 Para reativar o bot manualmente, envie:
+*${process.env.COMMAND_RELEASE || '/liberar'}*` 
       });
       
       return true;
     }
     
+    // ============================================
     // Comando: /liberar (Desbloqueia bot)
+    // ============================================
     if (command === 'RELEASE') {
+      // Verifica se já estava desbloqueado
+      if (!isBotBlockedForUser(jid)) {
+        log('INFO', `ℹ️ Bot já estava ativo para ${phone}`);
+        
+        await sock.sendMessage(jid, { 
+          text: `ℹ️ *Bot já está ativo*
+
+🤖 O bot já estava respondendo automaticamente para este número.
+Nenhuma ação necessária.` 
+        });
+        
+        return true;
+      }
+      
       unblockBotForUser(jid);
-      log('SUCCESS', `🤖 Bot LIBERADO para ${pushName} - IA reativada`);
+      
+      const user = getUser(jid);
+      const userName = user?.name || pushName;
+      
+      log('SUCCESS', `🤖 Bot LIBERADO para ${userName} (${phone}) - IA reativada`);
       
       await sock.sendMessage(jid, { 
-        text: `✅ *Bot liberado!*\n\nO atendimento automático foi reativado para este número.\n\n🤖 A IA voltará a responder normalmente.` 
+        text: `✅ *Bot liberado!*
+
+🤖 O atendimento automático foi reativado.
+👤 Cliente: *${userName}*
+📱 Próximas mensagens serão processadas pela IA.
+
+💡 Para assumir novamente, envie:
+*${process.env.COMMAND_ASSUME || '/assumir'}*` 
       });
       
       return true;
@@ -113,12 +163,13 @@ async function handleCommand(sock, message) {
     
   } catch (error) {
     log('ERROR', `❌ Erro ao processar comando: ${error.message}`);
+    console.error(error);
     return false;
   }
 }
 
 /**
- * HANDLER PRINCIPAL DE MENSAGENS
+ * 🔥 HANDLER PRINCIPAL DE MENSAGENS
  * Processa todas as mensagens recebidas e decide a ação
  */
 export async function handleIncomingMessage(sock, message) {
@@ -141,43 +192,31 @@ export async function handleIncomingMessage(sock, message) {
     const cleanedMessage = cleanMessage(messageText);
     const pushName = message.pushName || 'Cliente';
     
-    log('INFO', `📩 Mensagem recebida de ${pushName} (${phone}): "${cleanedMessage}"`);
+    log('INFO', `📩 Mensagem recebida de ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}${cleanedMessage.length > 50 ? '...' : ''}"`);
 
     // ============================================
     // PASSO 2: PROCESSA COMANDOS PRIMEIRO (PRIORIDADE MÁXIMA)
     // ============================================
     const isCommandProcessed = await handleCommand(sock, message);
     if (isCommandProcessed) {
-      log('INFO', `⚙️ Comando processado para ${pushName}`);
+      log('INFO', `⚙️ Comando processado com sucesso para ${pushName}`);
       return; // Comando executado, não continua processamento
     }
 
     // ============================================
-    // PASSO 3: Verifica expiração de bloqueio (1 hora)
-    // ============================================
-    const user = getUser(jid);
-    if (user?.blockedAt) {
-      const now = new Date();
-      const diffMinutes = (now - new Date(user.blockedAt)) / 1000 / 60;
-      if (diffMinutes > 60) {
-        unblockBotForUser(jid);
-        log('INFO', `🤖 Bot reativado automaticamente para ${pushName} após 1h sem interação`);
-      }
-    }
-
-    // ============================================
-    // PASSO 4: Verifica se bot está bloqueado
+    // PASSO 3: Verifica se bot está bloqueado
+    // 🔥 CORREÇÃO: A verificação de expiração agora está dentro de isBotBlockedForUser()
     // ============================================
     if (isBotBlockedForUser(jid)) {
-      log('WARNING', `🚫 Bot bloqueado para ${pushName} - Atendimento manual ativo`);
+      log('WARNING', `🚫 Bot bloqueado para ${pushName} (${phone}) - Atendimento manual ativo`);
       return; // Não responde - Roberto está atendendo
     }
 
     // ============================================
-    // PASSO 5: NOVO LEAD? (Interessado no bot)
+    // PASSO 4: NOVO LEAD? (Interessado no bot)
     // ============================================
     if (isNewLead(cleanedMessage)) {
-      log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName}`);
+      log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName} (${phone})`);
       
       markAsNewLead(jid, pushName);
       
@@ -190,10 +229,10 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ============================================
-    // PASSO 6: LEAD CONHECIDO? (Continuação)
+    // PASSO 5: LEAD CONHECIDO? (Continuação)
     // ============================================
     if (isLeadUser(jid)) {
-      log('INFO', `🎯 Mensagem de LEAD existente: ${pushName}`);
+      log('INFO', `🎯 Mensagem de LEAD existente: ${pushName} (${phone})`);
       
       saveUser(jid, { name: pushName });
       
@@ -201,9 +240,11 @@ export async function handleIncomingMessage(sock, message) {
       const aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
       await sock.sendMessage(jid, { text: aiResponse });
       
+      // Verifica se deve enviar link da fanpage
       if (shouldSendFanpageLink(cleanedMessage)) {
         await simulateTyping(sock, jid, 1500);
         await sock.sendMessage(jid, { text: FANPAGE_MESSAGE });
+        log('INFO', `📱 Link da fanpage enviado para ${pushName}`);
       }
       
       log('SUCCESS', `✅ Resposta IA enviada para LEAD: ${pushName}`);
@@ -211,12 +252,13 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ============================================
-    // PASSO 7: CLIENTE EXISTENTE COM CONVERSA ATIVA
+    // PASSO 6: CLIENTE EXISTENTE COM CONVERSA ATIVA
     // ============================================
     if (isExistingUser(jid) && hasOngoingConversation(jid)) {
       const user = getUser(jid);
-      log('INFO', `🔄 Cliente RECORRENTE: ${user.name}`);
+      log('INFO', `🔄 Cliente RECORRENTE: ${user.name} (${phone})`);
       
+      // Se for uma saudação, envia boas-vindas
       if (isGreeting(cleanedMessage)) {
         log('INFO', `👋 Saudação detectada de cliente recorrente: ${user.name}`);
         
@@ -230,6 +272,7 @@ export async function handleIncomingMessage(sock, message) {
         return;
       }
       
+      // Mensagem normal de cliente recorrente
       saveUser(jid, { name: pushName });
       
       await simulateTyping(sock, jid, 2500);
@@ -241,12 +284,13 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ============================================
-    // PASSO 8: PRIMEIRO CONTATO ou CONVERSA ANTIGA
+    // PASSO 7: PRIMEIRO CONTATO ou CONVERSA ANTIGA
     // ============================================
-    log('INFO', `🆕 Primeiro contato ou conversa antiga: ${pushName}`);
+    log('INFO', `🆕 Primeiro contato ou conversa antiga: ${pushName} (${phone})`);
     
     saveUser(jid, { name: pushName, isNewLead: false });
     
+    // Se for uma saudação, envia boas-vindas
     if (isGreeting(cleanedMessage)) {
       await simulateTyping(sock, jid, 2000);
       const welcomeMsg = await generateWelcomeMessage(pushName, false);
@@ -256,6 +300,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
     
+    // Mensagem normal de novo cliente
     await simulateTyping(sock, jid, 2500);
     const aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
     await sock.sendMessage(jid, { text: aiResponse });

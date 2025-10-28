@@ -3,6 +3,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 /**
+ * 🔥 VERSÃO DO PROMPT
+ * Útil para rastrear mudanças e rollback se necessário
+ */
+export const PROMPT_VERSION = '2.1.0';
+export const LAST_UPDATED = '2025-01-27';
+
+/**
  * BASE DE CONHECIMENTO - CHAT BOT MULTI-TAREFAS
  * Informações completas sobre o produto para a IA
  */
@@ -314,7 +321,7 @@ E o melhor: roda no seu computador, sem VPS! 🚀"
 Lembre-se: Seu objetivo é esclarecer dúvidas e direcionar para a fanpage! 🚀`;
 
 /**
- * Gera o system prompt personalizado com nome do cliente
+ * 🔥 MELHORADA: Gera o system prompt personalizado com nome do cliente
  * @param {string} customerName - Nome do cliente
  * @returns {string}
  */
@@ -325,6 +332,9 @@ export function getSystemPromptForCustomer(customerName = '') {
     prompt += `\n\n**IMPORTANTE:** O nome do cliente é ${customerName}. Use o nome dele naturalmente na conversa para criar rapport.`;
   }
   
+  // Adiciona informações de versão
+  prompt += `\n\n---\n_Prompt Version: ${PROMPT_VERSION} | Last Updated: ${LAST_UPDATED}_`;
+  
   return prompt;
 }
 
@@ -333,7 +343,7 @@ export function getSystemPromptForCustomer(customerName = '') {
  */
 export const FANPAGE_MESSAGE = `
 📱 *Acesse nossa fanpage para conhecer todos os detalhes:*
-${process.env.FANPAGE_URL}
+${process.env.FANPAGE_URL || 'https://bot-whatsapp-450420.web.app/'}
 
 Lá você encontra:
 ✅ Demonstração completa do bot
@@ -341,5 +351,195 @@ Lá você encontra:
 ✅ Todas as funcionalidades
 ✅ Formulário para solicitar o bot
 
-Ou fale direto com o Roberto: ${process.env.WHATSAPP_SUPPORT}
+Ou fale direto com o Roberto: ${process.env.WHATSAPP_SUPPORT || '(13) 99606-9536'}
 `.trim();
+
+/**
+ * 🔥 NOVA FUNÇÃO: Valida integridade da base de conhecimento
+ * @returns {Object} { valid: boolean, errors: Array }
+ */
+export function validateKnowledgeBase() {
+  const errors = [];
+  
+  // Valida produto
+  if (!KNOWLEDGE_BASE.produto?.nome) {
+    errors.push('Nome do produto não definido');
+  }
+  
+  // Valida preço
+  if (!KNOWLEDGE_BASE.preco?.valor_promocional) {
+    errors.push('Preço promocional não definido');
+  }
+  
+  // Valida contato
+  if (!KNOWLEDGE_BASE.contato?.whatsapp) {
+    errors.push('WhatsApp de contato não definido');
+  }
+  
+  if (!KNOWLEDGE_BASE.contato?.fanpage) {
+    errors.push('URL da fanpage não definida');
+  }
+  
+  // Valida funcionalidades
+  if (!KNOWLEDGE_BASE.funcionalidades?.delivery || KNOWLEDGE_BASE.funcionalidades.delivery.length === 0) {
+    errors.push('Funcionalidades não definidas');
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors: errors
+  };
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Exporta base de conhecimento para backup
+ * @returns {Object}
+ */
+export function exportKnowledgeBase() {
+  return {
+    version: PROMPT_VERSION,
+    lastUpdated: LAST_UPDATED,
+    knowledgeBase: KNOWLEDGE_BASE,
+    systemPrompt: SYSTEM_PROMPT,
+    exportedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Obtém informação específica da base de conhecimento
+ * @param {string} path - Caminho na base (ex: "preco.valor_promocional")
+ * @returns {any}
+ */
+export function getKnowledgeValue(path) {
+  const parts = path.split('.');
+  let current = KNOWLEDGE_BASE;
+  
+  for (const part of parts) {
+    if (current && typeof current === 'object' && part in current) {
+      current = current[part];
+    } else {
+      return null;
+    }
+  }
+  
+  return current;
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Lista todas as chaves disponíveis na base
+ * @returns {Array}
+ */
+export function listKnowledgeKeys() {
+  function getKeys(obj, prefix = '') {
+    let keys = [];
+    
+    for (const key in obj) {
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+      
+      if (typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
+        keys = keys.concat(getKeys(obj[key], fullKey));
+      } else {
+        keys.push(fullKey);
+      }
+    }
+    
+    return keys;
+  }
+  
+  return getKeys(KNOWLEDGE_BASE);
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Mostra resumo da base de conhecimento
+ */
+export function showKnowledgeSummary() {
+  console.log('\n📚 ╔═══════════════════════════════════════════╗');
+  console.log('📚 BASE DE CONHECIMENTO - RESUMO');
+  console.log('📚 ╚═══════════════════════════════════════════╝');
+  console.log(`📌 Versão do Prompt: ${PROMPT_VERSION}`);
+  console.log(`📅 Última Atualização: ${LAST_UPDATED}`);
+  console.log('');
+  console.log(`🏢 Produto: ${KNOWLEDGE_BASE.produto.nome}`);
+  console.log(`💰 Preço: ${KNOWLEDGE_BASE.preco.valor_promocional}`);
+  console.log(`📱 WhatsApp: ${KNOWLEDGE_BASE.contato.whatsapp}`);
+  console.log(`🌐 Fanpage: ${KNOWLEDGE_BASE.contato.fanpage}`);
+  console.log('');
+  console.log(`✨ Funcionalidades: ${KNOWLEDGE_BASE.funcionalidades.delivery.length} itens`);
+  console.log(`🎯 Diferenciais: ${KNOWLEDGE_BASE.diferenciais.length} itens`);
+  console.log(`🤖 Opções de IA: ${KNOWLEDGE_BASE.ia_opcoes.length} itens`);
+  console.log('');
+  
+  const validation = validateKnowledgeBase();
+  if (validation.valid) {
+    console.log('✅ Base de conhecimento validada com sucesso!');
+  } else {
+    console.log('⚠️ Problemas encontrados na base de conhecimento:');
+    validation.errors.forEach(error => {
+      console.log(`   - ${error}`);
+    });
+  }
+  
+  console.log('📚 ╚═══════════════════════════════════════════╝\n');
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Busca na base de conhecimento
+ * @param {string} query - Termo de busca
+ * @returns {Array} Resultados encontrados
+ */
+export function searchKnowledge(query) {
+  const results = [];
+  const lowerQuery = query.toLowerCase();
+  
+  function searchObject(obj, path = '') {
+    for (const key in obj) {
+      const value = obj[key];
+      const currentPath = path ? `${path}.${key}` : key;
+      
+      if (typeof value === 'string' && value.toLowerCase().includes(lowerQuery)) {
+        results.push({
+          path: currentPath,
+          value: value
+        });
+      } else if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          if (typeof item === 'string' && item.toLowerCase().includes(lowerQuery)) {
+            results.push({
+              path: `${currentPath}[${index}]`,
+              value: item
+            });
+          } else if (typeof item === 'object') {
+            searchObject(item, `${currentPath}[${index}]`);
+          }
+        });
+      } else if (typeof value === 'object' && value !== null) {
+        searchObject(value, currentPath);
+      }
+    }
+  }
+  
+  searchObject(KNOWLEDGE_BASE);
+  return results;
+}
+
+// Validação automática ao carregar
+const validation = validateKnowledgeBase();
+if (!validation.valid) {
+  console.warn('⚠️ ATENÇÃO: Problemas encontrados na base de conhecimento:');
+  validation.errors.forEach(error => console.warn(`   - ${error}`));
+}
+
+export default {
+  KNOWLEDGE_BASE,
+  SYSTEM_PROMPT,
+  FANPAGE_MESSAGE,
+  PROMPT_VERSION,
+  LAST_UPDATED,
+  getSystemPromptForCustomer,
+  validateKnowledgeBase,
+  exportKnowledgeBase,
+  getKnowledgeValue,
+  listKnowledgeKeys,
+  showKnowledgeSummary,
+  searchKnowledge
+};

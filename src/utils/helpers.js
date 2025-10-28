@@ -79,50 +79,110 @@ export function formatPhoneNumber(phone) {
 }
 
 /**
- * 🔥 CORRIGIDO: Verifica se é um comando do sistema
- * Aceita múltiplas variações de comandos
+ * 🔥 TOTALMENTE REESCRITA: Verifica se é um comando do sistema
+ * Aceita múltiplas variações de comandos de forma mais robusta
  * @param {string} message - Mensagem recebida
  * @returns {Object} { isCommand, command }
  */
 export function parseCommand(message) {
+  if (!message || typeof message !== 'string') {
+    return { isCommand: false, command: null };
+  }
+  
+  // Normaliza a mensagem: trim + lowercase
   const msg = message.trim().toLowerCase();
   
-  // Comandos do .env
+  // Se mensagem vazia, não é comando
+  if (msg.length === 0) {
+    return { isCommand: false, command: null };
+  }
+  
+  // 🔥 COMANDOS CONFIGURÁVEIS DO .ENV
   const commandAssume = (process.env.COMMAND_ASSUME || '/assumir').toLowerCase();
   const commandRelease = (process.env.COMMAND_RELEASE || '/liberar').toLowerCase();
   
-  // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA ASSUMIR:
+  // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA ASSUMIR
   const assumeVariations = [
-    commandAssume,           // /assumir (do .env)
-    'assumir',              // assumir
-    '/assumir',             // /assumir
-    './assumir',            // ./assumir (caso digitado errado)
-    'assumir atendimento',  // assumir atendimento
-    'assumir atendimento manual',
+    // Do .env
+    commandAssume,
+    // Sem barra
+    commandAssume.replace(/^[\/\.]+/, ''),
+    // Com barra
+    '/' + commandAssume.replace(/^[\/\.]+/, ''),
+    // Com ponto-barra (erro comum)
+    './' + commandAssume.replace(/^[\/\.]+/, ''),
+    // Variações em português
+    'assumir',
+    '/assumir',
+    './assumir',
+    'assumir atendimento',
+    '/assumir atendimento',
+    'assumir manual',
+    '/assumir manual',
     'bloquear bot',
-    'pausar bot'
+    '/bloquear bot',
+    'pausar bot',
+    '/pausar bot',
+    'bloquear',
+    '/bloquear'
   ];
   
-  // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA LIBERAR:
+  // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA LIBERAR
   const releaseVariations = [
-    commandRelease,         // /liberar (do .env)
-    'liberar',             // liberar
-    '/liberar',            // /liberar
-    './liberar',           // ./liberar (caso digitado errado)
+    // Do .env
+    commandRelease,
+    // Sem barra
+    commandRelease.replace(/^[\/\.]+/, ''),
+    // Com barra
+    '/' + commandRelease.replace(/^[\/\.]+/, ''),
+    // Com ponto-barra (erro comum)
+    './' + commandRelease.replace(/^[\/\.]+/, ''),
+    // Variações em português
+    'liberar',
+    '/liberar',
+    './liberar',
     'liberar bot',
+    '/liberar bot',
     'reativar bot',
+    '/reativar bot',
     'ativar bot',
-    'desbloquear bot'
+    '/ativar bot',
+    'desbloquear bot',
+    '/desbloquear bot',
+    'desbloquear',
+    '/desbloquear',
+    'ativar',
+    '/ativar'
   ];
   
-  // Verifica ASSUMIR
-  if (assumeVariations.some(variation => msg === variation || msg.startsWith(variation + ' '))) {
-    return { isCommand: true, command: 'ASSUME' };
+  // 🔥 Remove duplicatas e normaliza todas as variações
+  const uniqueAssumeVariations = [...new Set(assumeVariations.map(v => v.toLowerCase().trim()))];
+  const uniqueReleaseVariations = [...new Set(releaseVariations.map(v => v.toLowerCase().trim()))];
+  
+  // 🔥 VERIFICA ASSUMIR
+  // Checa se a mensagem É exatamente uma variação OU começa com ela seguida de espaço
+  for (const variation of uniqueAssumeVariations) {
+    if (msg === variation || msg.startsWith(variation + ' ')) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', `🎯 Comando ASSUME detectado: "${message}" → matched with "${variation}"`);
+      }
+      return { isCommand: true, command: 'ASSUME' };
+    }
   }
   
-  // Verifica LIBERAR
-  if (releaseVariations.some(variation => msg === variation || msg.startsWith(variation + ' '))) {
-    return { isCommand: true, command: 'RELEASE' };
+  // 🔥 VERIFICA LIBERAR
+  for (const variation of uniqueReleaseVariations) {
+    if (msg === variation || msg.startsWith(variation + ' ')) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', `🎯 Comando RELEASE detectado: "${message}" → matched with "${variation}"`);
+      }
+      return { isCommand: true, command: 'RELEASE' };
+    }
+  }
+  
+  // Não é comando
+  if (process.env.DEBUG_MODE === 'true' && (msg.includes('assumir') || msg.includes('liberar') || msg.includes('bloquear'))) {
+    log('WARNING', `⚠️ Mensagem contém palavra-chave mas não é comando: "${message}"`);
   }
   
   return { isCommand: false, command: null };
@@ -175,6 +235,10 @@ export function isNewLead(message) {
  * @returns {string}
  */
 export function cleanMessage(message) {
+  if (!message || typeof message !== 'string') {
+    return '';
+  }
+  
   return message
     .trim()
     .replace(/\s+/g, ' ') // Remove espaços múltiplos
@@ -355,6 +419,45 @@ Você já possui algum projeto em andamento, ou alguma conversa já iniciada?
 ❓ *Se ainda não*, me conte, como posso ajudar?`;
 }
 
+/**
+ * 🔥 NOVA FUNÇÃO: Testa a função parseCommand
+ * Útil para debug durante desenvolvimento
+ */
+export function testParseCommand() {
+  console.log('\n🧪 ═══════════════════════════════════════════');
+  console.log('🧪 TESTANDO FUNÇÃO parseCommand()');
+  console.log('🧪 ═══════════════════════════════════════════\n');
+  
+  const testCases = [
+    '/assumir',
+    'assumir',
+    './assumir',
+    'assumir atendimento',
+    'ASSUMIR',
+    '/ASSUMIR',
+    'bloquear bot',
+    '/liberar',
+    'liberar',
+    './liberar',
+    'liberar bot',
+    'LIBERAR',
+    '/LIBERAR',
+    'ativar bot',
+    'ola tudo bem', // não é comando
+    'como faço para assumir?', // não é comando (tem mais palavras antes)
+    'quero bloquear', // não é comando (tem palavra antes)
+  ];
+  
+  testCases.forEach((testCase, index) => {
+    const result = parseCommand(testCase);
+    const emoji = result.isCommand ? '✅' : '❌';
+    console.log(`${emoji} Teste ${index + 1}: "${testCase}"`);
+    console.log(`   → isCommand: ${result.isCommand}, command: ${result.command || 'null'}\n`);
+  });
+  
+  console.log('🧪 ═══════════════════════════════════════════\n');
+}
+
 export default {
   isBusinessHours,
   getBusinessHoursMessage,
@@ -372,5 +475,6 @@ export default {
   daysDifference,
   log,
   getNewLeadWelcome,
-  getReturningClientWelcome
+  getReturningClientWelcome,
+  testParseCommand
 };

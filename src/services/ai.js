@@ -24,6 +24,7 @@ const MAX_HISTORY_MESSAGES = 10;
  * @returns {Array}
  */
 function getConversationHistory(phone) {
+  if (!phone) return [];
   return conversationCache.get(phone) || [];
 }
 
@@ -33,9 +34,15 @@ function getConversationHistory(phone) {
  * @param {Array} history - Histórico de mensagens
  */
 function saveConversationHistory(phone, history) {
+  if (!phone) return;
+  
   // Limita o tamanho do histórico
   const limitedHistory = history.slice(-MAX_HISTORY_MESSAGES);
   conversationCache.set(phone, limitedHistory);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `💾 Histórico salvo: ${phone} (${limitedHistory.length} mensagens)`);
+  }
 }
 
 /**
@@ -45,9 +52,18 @@ function saveConversationHistory(phone, history) {
  * @param {string} content - Conteúdo da mensagem
  */
 function addToHistory(phone, role, content) {
+  if (!phone || !role || !content) {
+    log('WARNING', '⚠️ Tentativa de adicionar mensagem inválida ao histórico');
+    return;
+  }
+  
   const history = getConversationHistory(phone);
   history.push({ role, content });
   saveConversationHistory(phone, history);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `📝 Mensagem adicionada ao histórico: ${phone} [${role}] (${content.length} chars)`);
+  }
 }
 
 /**
@@ -55,12 +71,61 @@ function addToHistory(phone, role, content) {
  * @param {string} phone - Número do telefone
  */
 export function clearConversationHistory(phone) {
+  if (!phone) return;
+  
   conversationCache.del(phone);
   log('INFO', `🗑️ Histórico de conversa limpo para: ${phone}`);
 }
 
 /**
- * 🔥 NOVO: Gera instruções de contextualização dinâmicas
+ * 🔥 NOVA FUNÇÃO: Obtém tamanho do histórico
+ * @param {string} phone - Número do telefone
+ * @returns {number}
+ */
+export function getHistorySize(phone) {
+  const history = getConversationHistory(phone);
+  return history.length;
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Verifica se usuário tem histórico ativo
+ * @param {string} phone - Número do telefone
+ * @returns {boolean}
+ */
+export function hasActiveHistory(phone) {
+  return conversationCache.has(phone);
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Obtém estatísticas do cache de histórico
+ * @returns {Object}
+ */
+export function getHistoryStats() {
+  const keys = conversationCache.keys();
+  
+  let totalMessages = 0;
+  const historyDetails = keys.map(phone => {
+    const history = conversationCache.get(phone);
+    const messageCount = history.length;
+    totalMessages += messageCount;
+    
+    return {
+      phone,
+      messageCount,
+      lastUpdate: conversationCache.getTtl(phone)
+    };
+  });
+  
+  return {
+    activeConversations: keys.length,
+    totalMessages,
+    averageMessagesPerConversation: keys.length > 0 ? (totalMessages / keys.length).toFixed(1) : 0,
+    details: historyDetails
+  };
+}
+
+/**
+ * Gera instruções de contextualização dinâmicas
  * @param {boolean} isFirstMessage - Se é a primeira mensagem
  * @param {string} customerName - Nome do cliente
  * @returns {string}
@@ -68,7 +133,7 @@ export function clearConversationHistory(phone) {
 function getContextInstructions(isFirstMessage, customerName) {
   if (isFirstMessage) {
     return `
-## 📍 CONTEXTO ATUAL:
+## 🔥 CONTEXTO ATUAL:
 Esta é a **PRIMEIRA MENSAGEM** do cliente ${customerName}.
 
 **VOCÊ DEVE:**
@@ -81,7 +146,7 @@ Esta é a **PRIMEIRA MENSAGEM** do cliente ${customerName}.
 `;
   } else {
     return `
-## 📍 CONTEXTO ATUAL:
+## 🔥 CONTEXTO ATUAL:
 Esta é uma **CONTINUAÇÃO** de conversa com ${customerName}.
 
 **HISTÓRICO DISPONÍVEL:**
@@ -110,7 +175,7 @@ Você: "Sim! Você pode parcelar em até 5x..." ← ✅ Continua naturalmente
 }
 
 /**
- * Processa mensagem com a IA para NOVO LEAD (interessado no bot)
+ * 🔥 MELHORADA: Processa mensagem com a IA para NOVO LEAD (interessado no bot)
  * @param {string} phone - Número do telefone
  * @param {string} customerName - Nome do cliente
  * @param {string} userMessage - Mensagem do usuário
@@ -118,20 +183,33 @@ Você: "Sim! Você pode parcelar em até 5x..." ← ✅ Continua naturalmente
  */
 export async function processLeadMessage(phone, customerName, userMessage) {
   try {
-    log('INFO', `🤖 Processando mensagem de LEAD: ${customerName}`);
+    if (!phone || !customerName || !userMessage) {
+      throw new Error('Parâmetros inválidos para processLeadMessage');
+    }
+    
+    log('INFO', `🤖 Processando mensagem de LEAD: ${customerName} (${phone})`);
     
     // Obtém histórico
     const history = getConversationHistory(phone);
     
-    // 🔥 NOVO: Verifica se é primeira mensagem
+    // Verifica se é primeira mensagem
     const isFirstMessage = history.length === 0;
     
-    log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+    if (process.env.DEBUG_MODE === 'true') {
+      log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+      if (history.length > 0) {
+        log('INFO', `📜 Últimas mensagens no histórico:`);
+        history.slice(-3).forEach((msg, idx) => {
+          const preview = msg.content.substring(0, 50);
+          log('INFO', `   ${idx + 1}. [${msg.role}]: ${preview}...`);
+        });
+      }
+    }
     
     // System prompt base
     const baseSystemPrompt = getSystemPromptForCustomer(customerName);
     
-    // 🔥 NOVO: Adiciona instruções de contextualização
+    // Adiciona instruções de contextualização
     const contextInstructions = getContextInstructions(isFirstMessage, customerName);
     
     // System prompt completo
@@ -168,25 +246,35 @@ ${contextInstructions}
       }
     ];
     
+    if (process.env.DEBUG_MODE === 'true') {
+      log('INFO', `🔄 Enviando para IA: ${messages.length} mensagens (incluindo system prompt)`);
+    }
+    
     // Chama a IA
     const aiResponse = await callGroqAI(messages);
+    
+    if (!aiResponse || aiResponse.trim().length === 0) {
+      throw new Error('Resposta vazia da IA');
+    }
     
     // Adiciona ao histórico
     addToHistory(phone, 'user', userMessage);
     addToHistory(phone, 'assistant', aiResponse);
     
-    log('SUCCESS', `✅ Resposta gerada para ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'})`);
+    log('SUCCESS', `✅ Resposta gerada para ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'}) - ${aiResponse.length} chars`);
     
     return aiResponse;
     
   } catch (error) {
     log('ERROR', `❌ Erro ao processar mensagem de lead: ${error.message}`);
+    console.error(error);
+    
     return `Desculpe ${customerName}, estou com dificuldades técnicas no momento. 😅\n\nMas não se preocupe! O Roberto pode te atender direto pelo WhatsApp: ${process.env.WHATSAPP_SUPPORT}`;
   }
 }
 
 /**
- * Processa mensagem com a IA para CLIENTE EXISTENTE
+ * 🔥 MELHORADA: Processa mensagem com a IA para CLIENTE EXISTENTE
  * @param {string} phone - Número do telefone
  * @param {string} customerName - Nome do cliente
  * @param {string} userMessage - Mensagem do usuário
@@ -194,19 +282,25 @@ ${contextInstructions}
  */
 export async function processClientMessage(phone, customerName, userMessage) {
   try {
-    log('INFO', `🤖 Processando mensagem de CLIENTE: ${customerName}`);
+    if (!phone || !customerName || !userMessage) {
+      throw new Error('Parâmetros inválidos para processClientMessage');
+    }
+    
+    log('INFO', `🤖 Processando mensagem de CLIENTE: ${customerName} (${phone})`);
     
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     
     // Obtém histórico
     const history = getConversationHistory(phone);
     
-    // 🔥 NOVO: Verifica se é primeira mensagem
+    // Verifica se é primeira mensagem
     const isFirstMessage = history.length === 0;
     
-    log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+    if (process.env.DEBUG_MODE === 'true') {
+      log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+    }
     
-    // 🔥 NOVO: Adiciona instruções de contextualização
+    // Adiciona instruções de contextualização
     const contextInstructions = getContextInstructions(isFirstMessage, customerName);
     
     // System prompt para clientes existentes (mais genérico)
@@ -263,19 +357,29 @@ ${contextInstructions}
       }
     ];
     
+    if (process.env.DEBUG_MODE === 'true') {
+      log('INFO', `🔄 Enviando para IA: ${messages.length} mensagens`);
+    }
+    
     // Chama a IA
     const aiResponse = await callGroqAI(messages);
+    
+    if (!aiResponse || aiResponse.trim().length === 0) {
+      throw new Error('Resposta vazia da IA');
+    }
     
     // Adiciona ao histórico
     addToHistory(phone, 'user', userMessage);
     addToHistory(phone, 'assistant', aiResponse);
     
-    log('SUCCESS', `✅ Resposta gerada para cliente ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'})`);
+    log('SUCCESS', `✅ Resposta gerada para cliente ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'}) - ${aiResponse.length} chars`);
     
     return aiResponse;
     
   } catch (error) {
     log('ERROR', `❌ Erro ao processar mensagem de cliente: ${error.message}`);
+    console.error(error);
+    
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     return `Desculpe ${customerName}, estou com dificuldades técnicas no momento. 😅\n\nO ${ownerName} logo irá te atender!`;
   }
@@ -329,6 +433,8 @@ Você já possui algum projeto em andamento, ou alguma conversa já iniciada?
  * @returns {boolean}
  */
 export function shouldSendFanpageLink(message) {
+  if (!message || typeof message !== 'string') return false;
+  
   const keywords = [
     'fanpage',
     'site',
@@ -354,6 +460,8 @@ export function shouldSendFanpageLink(message) {
  * @returns {boolean}
  */
 export function shouldForwardToOwner(message) {
+  if (!message || typeof message !== 'string') return false;
+  
   const keywords = [
     'falar com',
     'quero falar',
@@ -373,19 +481,62 @@ export function shouldForwardToOwner(message) {
 }
 
 /**
- * Obtém estatísticas de uso da IA
+ * 🔥 MELHORADA: Obtém estatísticas de uso da IA
  * @returns {Object}
  */
 export function getAIStats() {
+  return getHistoryStats();
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Limpa históricos expirados (mais de 1 hora)
+ * @returns {number} Quantidade de históricos limpos
+ */
+export function cleanExpiredHistories() {
   const keys = conversationCache.keys();
+  let cleaned = 0;
   
-  return {
-    activeConversations: keys.length,
-    totalMessages: keys.reduce((total, key) => {
-      const history = conversationCache.get(key);
-      return total + history.length;
-    }, 0)
-  };
+  keys.forEach(phone => {
+    const ttl = conversationCache.getTtl(phone);
+    
+    // Se TTL é 0 ou undefined, o cache expirou
+    if (!ttl || ttl === 0) {
+      conversationCache.del(phone);
+      cleaned++;
+      log('INFO', `🧹 Histórico expirado removido: ${phone}`);
+    }
+  });
+  
+  if (cleaned > 0) {
+    log('SUCCESS', `✅ ${cleaned} histórico(s) expirado(s) removido(s)`);
+  }
+  
+  return cleaned;
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Lista todas as conversas ativas
+ */
+export function listActiveConversations() {
+  const stats = getHistoryStats();
+  
+  console.log('\n💬 ╔═══════════════════════════════════════════╗');
+  console.log('💬 CONVERSAS ATIVAS COM IA');
+  console.log('💬 ╚═══════════════════════════════════════════╝');
+  console.log(`Total: ${stats.activeConversations}`);
+  console.log(`Mensagens totais: ${stats.totalMessages}`);
+  console.log(`Média por conversa: ${stats.averageMessagesPerConversation}`);
+  console.log('');
+  
+  if (stats.details.length > 0) {
+    stats.details.forEach((detail, index) => {
+      console.log(`${index + 1}. ${detail.phone}`);
+      console.log(`   Mensagens: ${detail.messageCount}`);
+      console.log('');
+    });
+  }
+  
+  console.log('💬 ╚═══════════════════════════════════════════╝\n');
 }
 
 export default {
@@ -395,5 +546,10 @@ export default {
   clearConversationHistory,
   shouldSendFanpageLink,
   shouldForwardToOwner,
-  getAIStats
+  getAIStats,
+  getHistorySize,
+  hasActiveHistory,
+  getHistoryStats,
+  cleanExpiredHistories,
+  listActiveConversations
 };
