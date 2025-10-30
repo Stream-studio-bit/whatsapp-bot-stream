@@ -462,6 +462,33 @@ export function printStats() {
   console.log('📊 ╚═══════════════════════════════════════════╝\n');
 }
 
+/**
+ * 🔥 NOVA FUNÇÃO: Salva histórico de conversa (chamada pelo messageHandler)
+ * Armazena mensagens trocadas em memória (pode evoluir para salvar em arquivo ou DB)
+ * @param {string} jid - JID do WhatsApp
+ * @param {string} message - Mensagem enviada ou recebida
+ * @param {'in'|'out'} direction - Direção da mensagem
+ */
+export function saveConversationHistory(jid, message, direction = 'in') {
+  const phone = extractPhoneNumber(jid);
+  const key = `history_${phone}`;
+  const existing = userCache.get(key) || [];
+  const entry = {
+    timestamp: new Date().toISOString(),
+    direction,
+    message
+  };
+  existing.push(entry);
+  userCache.set(key, existing);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `💬 Histórico salvo para ${phone} (${direction}): ${message}`);
+  }
+}
+
+/**
+ * EXPORTAÇÃO FINAL
+ */
 export default {
   saveUser,
   updateUser,
@@ -481,5 +508,6 @@ export default {
   clearUser,
   clearAllCache,
   exportData,
-  printStats
+  printStats,
+  saveConversationHistory
 };
