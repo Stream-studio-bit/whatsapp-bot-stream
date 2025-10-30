@@ -95,7 +95,7 @@ async function handleCommand(sock, message) {
       await sock.sendMessage(jid, { 
         text: `❌ Desculpe, apenas o administrador pode usar comandos do sistema.` 
       }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar mensagem de não autorizado: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar mensagem de não autorizado: ${err?.message || err}`);
       });
       
       return true;
@@ -109,16 +109,14 @@ async function handleCommand(sock, message) {
     if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
       log('INFO', `🔒 Executando bloqueio para ${jid}...`);
       
-      // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
-      const blockResult = await blockBotForUser(jid);
-      
-      log('INFO', `📊 Resultado do bloqueio: ${blockResult ? '✅ Sucesso' : '❌ Falha'}`);
-      
-      if (!blockResult) {
-        log('ERROR', `❌ Falha ao bloquear bot para ${phone}`);
-        await sock.sendMessage(jid, { 
-          text: `❌ Erro ao bloquear bot. Tente novamente.` 
-        }).catch(() => {});
+      try {
+        // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
+        // blockBotForUser pode ser síncrono ou assíncrono dependendo da implementação do DB
+        const maybePromise = blockBotForUser(jid);
+        if (maybePromise instanceof Promise) await maybePromise;
+      } catch (err) {
+        log('ERROR', `❌ Erro ao bloquear bot no banco para ${phone}: ${err?.message || err}`);
+        await sock.sendMessage(jid, { text: `❌ Erro ao bloquear bot. Tente novamente.` }).catch(() => {});
         return true;
       }
       
@@ -139,9 +137,10 @@ async function handleCommand(sock, message) {
 💡 Para reativar o bot manualmente, envie:
 *${process.env.COMMAND_RELEASE || '/liberar'}*` 
       }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar confirmação de bloqueio: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar confirmação de bloqueio: ${err?.message || err}`);
       });
       
+      // Retorna true para indicar que foi comando e que não se deve prosseguir
       return true;
     }
     
@@ -152,7 +151,12 @@ async function handleCommand(sock, message) {
       log('INFO', `🔓 Verificando status de bloqueio para ${jid}...`);
       
       // 🔥 CORREÇÃO: Verifica se já está desbloqueado
-      const isBlocked = await isBotBlockedForUser(jid);
+      let isBlocked = false;
+      try {
+        isBlocked = await isBotBlockedForUser(jid);
+      } catch (err) {
+        log('ERROR', `❌ Erro ao checar bloqueio para ${phone}: ${err?.message || err}`);
+      }
       
       log('INFO', `📊 Status atual: ${isBlocked ? '🔒 Bloqueado' : '🔓 Ativo'}`);
       
@@ -171,16 +175,13 @@ Nenhuma ação necessária.`
       
       log('INFO', `🔓 Executando desbloqueio para ${jid}...`);
       
-      // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
-      const unblockResult = await unblockBotForUser(jid);
-      
-      log('INFO', `📊 Resultado do desbloqueio: ${unblockResult ? '✅ Sucesso' : '❌ Falha'}`);
-      
-      if (!unblockResult) {
-        log('ERROR', `❌ Falha ao liberar bot para ${phone}`);
-        await sock.sendMessage(jid, { 
-          text: `❌ Erro ao liberar bot. Tente novamente.` 
-        }).catch(() => {});
+      try {
+        // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
+        const maybePromise = unblockBotForUser(jid);
+        if (maybePromise instanceof Promise) await maybePromise;
+      } catch (err) {
+        log('ERROR', `❌ Falha ao liberar bot no banco para ${phone}: ${err?.message || err}`);
+        await sock.sendMessage(jid, { text: `❌ Erro ao liberar bot. Tente novamente.` }).catch(() => {});
         return true;
       }
       
@@ -200,7 +201,7 @@ Nenhuma ação necessária.`
 💡 Para assumir novamente, envie:
 *${process.env.COMMAND_ASSUME || '/assumir'}*` 
       }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar confirmação de liberação: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar confirmação de liberação: ${err?.message || err}`);
       });
       
       return true;
@@ -225,9 +226,18 @@ Nenhuma ação necessária.`
 export async function handleIncomingMessage(sock, message) {
   try {
     // ============================================
-    // PASSO 1: Valida se é uma mensagem processável
+    // PASSO 0: VALIDAÇÕES RÁPIDAS E FIRA DE LOOP
     // ============================================
     if (!isValidMessage(message)) {
+      return;
+    }
+
+    // 🔥 PREVENÇÃO DE LOOP: ignora mensagens enviadas pelo próprio socket (fromMe)
+    // Alguns setups do Baileys emitem eventos para mensagens enviadas; isso pode causar loop.
+    if (message?.key?.fromMe) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', `ℹ️ Ignorando mensagem originada pelo próprio bot (fromMe).`);
+      }
       return;
     }
 
@@ -258,7 +268,15 @@ export async function handleIncomingMessage(sock, message) {
     // PASSO 3: Verifica se bot está bloqueado
     // 🔥 CORREÇÃO: Apenas consulta banco, não mexe no socket
     // ============================================
-    const isBlocked = await isBotBlockedForUser(jid);
+    let isBlocked = false;
+    try {
+      isBlocked = await isBotBlockedForUser(jid);
+    } catch (err) {
+      log('ERROR', `❌ Erro ao verificar bloqueio para ${phone}: ${err?.message || err}`);
+      // Em caso de erro ao checar, assumimos não bloqueado para não travar conversas
+      isBlocked = false;
+    }
+
     if (isBlocked) {
       log('WARNING', `🚫 Bot bloqueado para ${pushName} (${phone}) - Atendimento manual ativo`);
       return; // 🔥 Apenas retorna, não toca no socket
@@ -280,7 +298,7 @@ export async function handleIncomingMessage(sock, message) {
       const welcomeMsg = await generateWelcomeMessage(pushName, true);
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar boas-vindas para LEAD: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar boas-vindas para LEAD: ${err?.message || err}`);
       });
       
       // 🔥 CORREÇÃO: Salva boas-vindas no histórico para evitar saudação duplicada
@@ -292,7 +310,7 @@ export async function handleIncomingMessage(sock, message) {
         
         log('INFO', `💾 Histórico de boas-vindas salvo para ${pushName}`);
       } catch (err) {
-        log('ERROR', `❌ Erro ao salvar histórico de boas-vindas: ${err.message}`);
+        log('ERROR', `❌ Erro ao salvar histórico de boas-vindas: ${err?.message || err}`);
       }
       
       log('SUCCESS', `✅ Boas-vindas enviadas para LEAD: ${pushName}`);
@@ -313,7 +331,7 @@ export async function handleIncomingMessage(sock, message) {
       const aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
       
       await sock.sendMessage(jid, { text: aiResponse }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar resposta IA para LEAD: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar resposta IA para LEAD: ${err?.message || err}`);
       });
       
       // Verifica se deve enviar link da fanpage
@@ -348,7 +366,7 @@ export async function handleIncomingMessage(sock, message) {
         const welcomeMsg = await generateWelcomeMessage(user.name, false);
         
         await sock.sendMessage(jid, { text: welcomeMsg }).catch(err => {
-          log('ERROR', `❌ Erro ao enviar boas-vindas: ${err.message}`);
+          log('ERROR', `❌ Erro ao enviar boas-vindas: ${err?.message || err}`);
         });
         
         log('SUCCESS', `✅ Boas-vindas enviadas para cliente recorrente: ${user.name}`);
@@ -364,7 +382,7 @@ export async function handleIncomingMessage(sock, message) {
       const aiResponse = await processClientMessage(phone, user.name, cleanedMessage);
       
       await sock.sendMessage(jid, { text: aiResponse }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar resposta IA: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar resposta IA: ${err?.message || err}`);
       });
       
       log('SUCCESS', `✅ Resposta IA enviada para cliente: ${user.name}`);
@@ -386,7 +404,7 @@ export async function handleIncomingMessage(sock, message) {
       const welcomeMsg = await generateWelcomeMessage(pushName, false);
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(err => {
-        log('ERROR', `❌ Erro ao enviar boas-vindas: ${err.message}`);
+        log('ERROR', `❌ Erro ao enviar boas-vindas: ${err?.message || err}`);
       });
       
       log('SUCCESS', `✅ Boas-vindas enviadas para novo cliente: ${pushName}`);
@@ -400,7 +418,7 @@ export async function handleIncomingMessage(sock, message) {
     const aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
     
     await sock.sendMessage(jid, { text: aiResponse }).catch(err => {
-      log('ERROR', `❌ Erro ao enviar resposta IA: ${err.message}`);
+      log('ERROR', `❌ Erro ao enviar resposta IA: ${err?.message || err}`);
     });
     
     log('SUCCESS', `✅ Resposta IA enviada para novo cliente: ${pushName}`);
