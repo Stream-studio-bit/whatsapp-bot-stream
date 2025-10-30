@@ -395,14 +395,8 @@ export async function handleIncomingMessage(sock, message) {
  */
 export async function processMessage(sock, message) {
   try {
-    // 🔥 CORREÇÃO: Verifica se socket está válido antes de processar
-    if (!sock?.ws || sock.ws.readyState !== 1) {
-      log('WARNING', '⚠️ Socket inválido - mensagem ignorada');
-      return;
-    }
-    
+    // 🔥 CORREÇÃO: Não valida o socket aqui
     await handleIncomingMessage(sock, message);
-    
   } catch (error) {
     // 🔥 CORREÇÃO: Não loga erros de conexão (muito verboso)
     if (!error.message.includes('Connection')) {
