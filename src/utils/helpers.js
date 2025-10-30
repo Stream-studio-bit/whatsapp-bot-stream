@@ -79,7 +79,7 @@ export function formatPhoneNumber(phone) {
 }
 
 /**
- * 🔥 TOTALMENTE REESCRITA: Verifica se é um comando do sistema
+ * 🔥 CORREÇÃO: Verifica se é um comando do sistema
  * Aceita múltiplas variações de comandos de forma mais robusta
  * @param {string} message - Mensagem recebida
  * @returns {Object} { isCommand, command }
@@ -272,23 +272,51 @@ export function sleep(ms) {
 }
 
 /**
- * Simula digitação (typing indicator)
+ * 🔥 CORREÇÃO: Simula digitação (typing indicator) com timeout de segurança
  * @param {Object} sock - Socket do Baileys
  * @param {string} jid - JID do destinatário
- * @param {number} duration - Duração em ms (padrão: 2000ms)
+ * @param {number} duration - Duração em ms (padrão: 1500ms, máximo: 1500ms)
  */
-export async function simulateTyping(sock, jid, duration = 2000) {
+export async function simulateTyping(sock, jid, duration = 1500) {
   try {
-    // Envia status "digitando"
-    await sock.sendPresenceUpdate('composing', jid);
+    // 🔥 CORREÇÃO: Limita duração máxima para evitar delays longos
+    const safeDuration = Math.min(duration, 1500);
     
-    // Aguarda duração
-    await sleep(duration);
+    // 🔥 CORREÇÃO: Verifica se socket está ativo antes de enviar
+    if (!sock?.ws || sock.ws.readyState !== 1) {
+      return; // Socket não está pronto, ignora typing
+    }
     
-    // Para de "digitar"
-    await sock.sendPresenceUpdate('paused', jid);
+    // Envia status "digitando" com timeout de segurança
+    const typingPromise = sock.sendPresenceUpdate('composing', jid);
+    await Promise.race([
+      typingPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Typing timeout')), 3000))
+    ]).catch(() => {
+      // Ignora erro de timeout
+    });
+    
+    // Aguarda duração (reduzida)
+    await sleep(safeDuration);
+    
+    // Para de "digitar" com timeout de segurança
+    if (!sock?.ws || sock.ws.readyState !== 1) {
+      return; // Socket caiu durante o delay
+    }
+    
+    const pausePromise = sock.sendPresenceUpdate('paused', jid);
+    await Promise.race([
+      pausePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Pause timeout')), 3000))
+    ]).catch(() => {
+      // Ignora erro de timeout
+    });
+    
   } catch (error) {
-    console.error('Erro ao simular digitação:', error.message);
+    // 🔥 CORREÇÃO: Não loga erros de conexão (muito verboso)
+    if (!error.message.includes('Connection') && !error.message.includes('timeout')) {
+      console.error('Erro ao simular digitação:', error.message);
+    }
   }
 }
 
