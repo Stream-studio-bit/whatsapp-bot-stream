@@ -17,9 +17,9 @@ import { startServer } from './server.js';
 // Importa configurações e serviços
 import { validateGroqConfig } from './config/groq.js';
 import { log } from './utils/helpers.js';
-import { printStats } from './services/database.js';
+import { printStats, cleanExpiredBlocks } from './services/database.js';
 import { processMessage } from './controllers/messageHandler.js';
-import { removeUser, resetSystem, quickStatus, cleanupExpiredBlocks, backupData, showHelpMenu, showStats, showUserDetails, listBlockedUsers, listAllUsers } from './controllers/commandHandler.js';
+import { removeUser, resetSystem, quickStatus, backupData, showHelpMenu, showStats, showUserDetails, listBlockedUsers, listAllUsers } from './controllers/commandHandler.js';
 
 dotenv.config();
 
@@ -35,10 +35,22 @@ let reconnectScheduled = false;
 const MAX_RECONNECT_ATTEMPTS = 10;
 
 /**
+ * 🔥 PROTEÇÃO CONTRA MENSAGENS DUPLICADAS (Diretriz 9)
+ */
+const processedMessages = new Set();
+const MESSAGE_CACHE_LIMIT = 1000;
+const MESSAGE_CACHE_CLEANUP_INTERVAL = 300000; // 5 minutos
+
+/**
  * 🔥 Variável global para armazenar o socket (FONTE ÚNICA DE VERDADE)
  * ⚠️ NUNCA sobrescrever, fechar ou destruir fora deste arquivo
  */
 let globalSock = null;
+
+/**
+ * 🔥 CLEANUP INTERVAL HANDLE
+ */
+let cleanupInterval = null;
 
 /**
  * CONFIGURAÇÕES GLOBAIS
@@ -65,6 +77,46 @@ function showBanner() {
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `⚙️  Powered by: Baileys + Groq AI + MongoDB`);
   console.log('');
+}
+
+/**
+ * 🔥 LIMPEZA DE CACHE DE MENSAGENS (Diretriz 9)
+ * Evita crescimento infinito do Set
+ */
+function cleanupMessageCache() {
+  if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
+    const excess = processedMessages.size - MESSAGE_CACHE_LIMIT;
+    const iterator = processedMessages.values();
+    
+    for (let i = 0; i < excess; i++) {
+      const { value } = iterator.next();
+      if (value) processedMessages.delete(value);
+    }
+    
+    log('INFO', `🧹 Cache de mensagens limpo: ${excess} entradas removidas`);
+  }
+}
+
+/**
+ * 🔥 INICIALIZAÇÃO DE TAREFAS PERIÓDICAS (Diretriz 5)
+ */
+function startPeriodicTasks() {
+  // Já existe um interval? Limpa antes
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+  }
+  
+  // Cleanup de bloqueios expirados a cada 5 minutos
+  cleanupInterval = setInterval(async () => {
+    try {
+      await cleanExpiredBlocks();
+      cleanupMessageCache();
+    } catch (error) {
+      log('WARNING', `⚠️  Erro no cleanup periódico: ${error.message}`);
+    }
+  }, 5 * 60 * 1000); // 5 minutos
+  
+  log('SUCCESS', '✅ Tarefas periódicas iniciadas (cleanup a cada 5min)');
 }
 
 /**
@@ -196,9 +248,10 @@ async function connectWhatsApp() {
   isConnecting = true;
   
   try {
-    log('INFO', `🔄 Iniciando conexão com WhatsApp (Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) - ${new Date().toLocaleTimeString()}`);
+    const timestamp = new Date().toLocaleTimeString('pt-BR');
+    log('INFO', `🔄 Iniciando conexão (Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) - ${timestamp}`);
     
-    // 🔥 CORREÇÃO: Só fecha socket anterior se ele realmente existir E estiver ativo
+    // 🔥 CORREÇÃO: Só fecha socket anterior se ele realmente existir E estiver inativo
     if (globalSock && globalSock.ws) {
       const wsState = globalSock.ws.readyState;
       
@@ -206,6 +259,7 @@ async function connectWhatsApp() {
       if (wsState !== 1) {
         log('INFO', '🔌 Removendo socket anterior inativo...');
         try {
+          // 🔥 CORREÇÃO (Diretriz 8): Remove listeners antes de destruir
           globalSock.ev.removeAllListeners?.();
         } catch (e) { /* ignore */ }
         globalSock = null;
@@ -277,7 +331,6 @@ async function connectWhatsApp() {
       // Conexão fechada
       if (connection === 'close') {
         // 🔥 CORREÇÃO: Verificação de integridade antes de reconectar
-        // Se o socket global ainda está aberto, não reconectar
         if (globalSock?.ws?.readyState === 1) {
           log('INFO', '✅ Socket global ainda está ativo - ignorando close event');
           return;
@@ -307,8 +360,7 @@ async function connectWhatsApp() {
             // Delay progressivo (3s, 5s, 10s, 15s...)
             const delay = Math.min(3000 + (reconnectAttempts * 2000), 15000);
             
-            log('WARNING', `⚠️  Conexão perdida. Reconectando em ${delay/1000} segundos...`);
-            log('INFO', `📊 Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS} - ${new Date().toLocaleTimeString()}`);
+            log('WARNING', `⚠️  Conexão perdida. Reconectando em ${delay/1000}s...`);
             
             setTimeout(() => {
               reconnectScheduled = false;
@@ -326,6 +378,12 @@ async function connectWhatsApp() {
             log('ERROR', `❌ Erro ao limpar credenciais: ${e.message}`);
           }
           
+          // Limpa interval de cleanup
+          if (cleanupInterval) {
+            clearInterval(cleanupInterval);
+            cleanupInterval = null;
+          }
+          
           // Fecha MongoDB
           if (mongoClient) {
             try {
@@ -336,7 +394,7 @@ async function connectWhatsApp() {
             }
           }
           
-          // 🔥 CORREÇÃO: Só encerra se FORCE_EXIT_ON_LOGOUT estiver configurado
+          // 🔥 CORREÇÃO (Diretriz 7): Não encerra processo a menos que configurado
           if (process.env.FORCE_EXIT_ON_LOGOUT === 'true') {
             log('INFO', '🛑 Encerrando processo (FORCE_EXIT_ON_LOGOUT=true)');
             process.exit(0);
@@ -356,6 +414,9 @@ async function connectWhatsApp() {
         console.log('\n🎉 ┌──────────────────────────────────────────────┐');
         console.log('🎉 BOT ONLINE E FUNCIONANDO!');
         console.log('🎉 └──────────────────────────────────────────────┘\n');
+        
+        // 🔥 CORREÇÃO (Diretriz 5): Inicia tarefas periódicas
+        startPeriodicTasks();
         
         // Mostra estatísticas
         printStats();
@@ -384,13 +445,23 @@ async function connectWhatsApp() {
       // Só processa mensagens novas
       if (type !== 'notify') return;
       
-      // 🔥 CORREÇÃO: Processa todas as mensagens do array (não só a primeira)
+      // 🔥 CORREÇÃO: Processa todas as mensagens do array
       for (const message of messages) {
         try {
-          // Ignora mensagens próprias
+          // 🔥 CORREÇÃO (Diretriz 2): Ignora mensagens próprias
           if (message.key.fromMe) continue;
           
-          // 🔥 CORREÇÃO: Ignora mensagens sem conteúdo (messageStubType)
+          // 🔥 CORREÇÃO (Diretriz 9): Proteção contra duplicatas
+          const messageId = message.key.id;
+          if (processedMessages.has(messageId)) {
+            if (process.env.DEBUG_MODE === 'true') {
+              log('INFO', '🔁 Mensagem duplicada ignorada');
+            }
+            continue;
+          }
+          processedMessages.add(messageId);
+          
+          // 🔥 CORREÇÃO: Ignora mensagens sem conteúdo (stub/system)
           if (!message.message) {
             if (process.env.DEBUG_MODE === 'true') {
               log('INFO', '⏭️  Mensagem sem conteúdo ignorada (stub/system message)');
@@ -398,16 +469,15 @@ async function connectWhatsApp() {
             continue;
           }
           
-          // 🔥 CORREÇÃO: Usa o sock do escopo (sempre válido dentro do evento)
-          // Não depende de globalSock que pode ser null durante reconexão
+          // 🔥 CORREÇÃO (Diretriz 1): Usa sock do escopo, nunca manipula conexão aqui
           await processMessage(sock, message);
           
         } catch (error) {
-          // Trata erros silenciosamente para não crashar o evento
-          if (error.message?.includes('Connection')) {
+          // 🔥 CORREÇÃO (Diretriz 7): Trata erros silenciosamente, sem interromper fluxo
+          if (error.message?.includes('Connection') || error.message?.includes('WebSocket')) {
             log('WARNING', '⚠️  Conexão interrompida durante processamento');
           } else {
-            log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
+            log('WARNING', `⚠️  Erro ao processar mensagem: ${error.message}`);
             if (process.env.DEBUG_MODE === 'true') {
               console.error(error.stack);
             }
@@ -437,17 +507,19 @@ async function connectWhatsApp() {
       console.error(error.stack);
     }
     
-    // 🔥 CORREÇÃO: Não manipula globalSock aqui (deixar intacto)
+    // 🔥 CORREÇÃO (Diretriz 1): Não manipula globalSock aqui
     
-    // 🔥 CORREÇÃO: Delay maior após erro (10 segundos) e usa flag de agendamento
+    // 🔥 CORREÇÃO: Delay progressivo após erro e usa flag de agendamento
     if (!reconnectScheduled) {
       reconnectScheduled = true;
-      log('INFO', '🔄 Tentando reconectar em 10 segundos...');
+      const delay = Math.min(5000 + (reconnectAttempts * 2000), 15000);
+      
+      log('INFO', `🔄 Tentando reconectar em ${delay/1000}s...`);
       
       setTimeout(() => {
         reconnectScheduled = false;
         connectWhatsApp();
-      }, 10000);
+      }, delay);
     }
     
     return null;
@@ -522,7 +594,7 @@ function setupConsoleCommands() {
  * Tratamento de erros não capturados
  */
 process.on('unhandledRejection', (err) => {
-  log('ERROR', `❌ Unhandled Rejection: ${err.message}`);
+  log('WARNING', `⚠️  Unhandled Rejection: ${err.message}`);
   
   if (process.env.DEBUG_MODE === 'true') {
     console.error(err.stack);
@@ -530,13 +602,13 @@ process.on('unhandledRejection', (err) => {
 });
 
 process.on('uncaughtException', (err) => {
-  log('ERROR', `❌ Uncaught Exception: ${err.message}`);
+  log('WARNING', `⚠️  Uncaught Exception: ${err.message}`);
   
   if (process.env.DEBUG_MODE === 'true') {
     console.error(err.stack);
   }
   
-  // 🔥 Tenta reconectar ao invés de encerrar
+  // 🔥 CORREÇÃO (Diretriz 7): Tenta reconectar ao invés de encerrar
   if (err.message.includes('Connection') || err.message.includes('WebSocket')) {
     log('INFO', '🔄 Tentando reconectar após erro de conexão...');
     
@@ -549,6 +621,7 @@ process.on('uncaughtException', (err) => {
     }
   } else {
     // Erro crítico não relacionado a conexão
+    log('ERROR', '❌ Erro crítico detectado. Encerrando...');
     process.exit(1);
   }
 });
@@ -560,6 +633,11 @@ process.on('SIGINT', async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado pelo usuário');
   
+  // Limpa interval de cleanup
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+  }
+  
   if (mongoClient) {
     await mongoClient.close();
   }
@@ -570,6 +648,11 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado');
+  
+  // Limpa interval de cleanup
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+  }
   
   if (mongoClient) {
     await mongoClient.close();

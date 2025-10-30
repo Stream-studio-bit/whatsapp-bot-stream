@@ -16,7 +16,8 @@ const userCache = new NodeCache({
 
 /**
  * CACHE DE BLOQUEIO DO BOT (atendimento manual)
- * ⚠️ FONTE ÚNICA DE VERDADE para status de bloqueio
+ * ⚠️ 🔥 FONTE ÚNICA DE VERDADE para status de bloqueio
+ * 🔥 DIRETRIZ 3: Esta é a única fonte de controle de bloqueio
  * Guarda quais usuários estão em atendimento manual
  */
 const manualAttendanceCache = new NodeCache({ 
@@ -36,7 +37,7 @@ const manualAttendanceCache = new NodeCache({
  */
 
 /**
- * 🔥 NOVA FUNÇÃO: Normaliza data para Date object
+ * 🔥 NORMALIZA DATA: Converte para Date object
  * @param {Date|string|number} date - Data em qualquer formato
  * @returns {Date|null}
  */
@@ -53,7 +54,7 @@ function normalizeDate(date) {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Verifica se bloqueio expirou (1 hora)
+ * 🔥 VERIFICA EXPIRAÇÃO: Bloqueio expira após 1 hora (Diretriz 5)
  * @param {Date|string} blockedAt - Data do bloqueio
  * @returns {boolean} true se expirou (passou 1 hora)
  */
@@ -70,7 +71,7 @@ export function isBlockExpired(blockedAt) {
 }
 
 /**
- * 🔥 MELHORADA: Salva ou atualiza dados do usuário
+ * 🔥 SALVA USUÁRIO: Atualiza dados do usuário
  * @param {string} jid - JID do WhatsApp
  * @param {Object} data - Dados para atualizar
  */
@@ -78,7 +79,7 @@ export function saveUser(jid, data = {}) {
   const phone = extractPhoneNumber(jid);
   const existing = userCache.get(phone);
   
-  // 🔥 CORREÇÃO: Sincroniza blockedAt do manualAttendanceCache (fonte única de verdade)
+  // 🔥 DIRETRIZ 3: Sincroniza blockedAt do manualAttendanceCache (fonte única)
   const manualAttendance = manualAttendanceCache.get(phone);
   const blockedAt = manualAttendance?.blockedAt 
     ? normalizeDate(manualAttendance.blockedAt)
@@ -104,7 +105,7 @@ export function saveUser(jid, data = {}) {
 }
 
 /**
- * 🔥 MELHORADA: Atualiza dados do usuário sem incrementar messageCount
+ * 🔥 ATUALIZA USUÁRIO: Sem incrementar messageCount
  * @param {string} jid - JID do WhatsApp
  * @param {Object} data - Dados para atualizar
  * @returns {UserData|null}
@@ -118,7 +119,7 @@ export function updateUser(jid, data = {}) {
     return null;
   }
   
-  // 🔥 CORREÇÃO: Sincroniza blockedAt do manualAttendanceCache
+  // 🔥 DIRETRIZ 3: Sincroniza blockedAt do manualAttendanceCache
   const manualAttendance = manualAttendanceCache.get(phone);
   const blockedAt = manualAttendance?.blockedAt 
     ? normalizeDate(manualAttendance.blockedAt)
@@ -143,7 +144,8 @@ export function updateUser(jid, data = {}) {
 }
 
 /**
- * 🔥 MELHORADA: Busca dados do usuário
+ * 🔥 BUSCA USUÁRIO: Retorna dados do usuário
+ * 🔥 DIRETRIZ 5: Verifica expiração automática ao buscar
  * @param {string} jid - JID do WhatsApp
  * @returns {UserData|null}
  */
@@ -153,7 +155,7 @@ export function getUser(jid) {
   
   if (!user) return null;
   
-  // 🔥 CORREÇÃO: SEMPRE sincroniza blockedAt do manualAttendanceCache (fonte única de verdade)
+  // 🔥 DIRETRIZ 3: SEMPRE sincroniza blockedAt do manualAttendanceCache (fonte única)
   const manualAttendance = manualAttendanceCache.get(phone);
   const blockedAt = manualAttendance?.blockedAt 
     ? normalizeDate(manualAttendance.blockedAt)
@@ -162,15 +164,14 @@ export function getUser(jid) {
   // Atualiza o objeto user com o blockedAt correto
   user.blockedAt = blockedAt;
   
-  // 🔥 NOVO: Verifica se bloqueio expirou automaticamente
+  // 🔥 DIRETRIZ 5 + 10: Verifica expiração automática com log
   if (blockedAt && isBlockExpired(blockedAt)) {
+    const timestamp = new Date().toLocaleTimeString('pt-BR');
+    log('INFO', `⏰ [${timestamp}] Bloqueio expirado automaticamente para ${phone}`);
+    
     // Desbloqueia automaticamente se passou 1 hora
     unblockBotForUser(jid);
     user.blockedAt = null;
-    
-    if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `⏰ Bloqueio expirado automaticamente para: ${phone}`);
-    }
   }
   
   return user;
@@ -215,7 +216,8 @@ export function markAsNewLead(jid, name) {
     isNewLead: true 
   });
   
-  log('SUCCESS', `🎯 Novo Lead identificado: ${name}`);
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
+  log('SUCCESS', `🎯 [${timestamp}] Novo Lead identificado: ${name}`);
 }
 
 /**
@@ -229,41 +231,51 @@ export function isLeadUser(jid) {
 }
 
 /**
- * CONTROLE DE ATENDIMENTO MANUAL
+ * ============================================
+ * 🔥 CONTROLE DE ATENDIMENTO MANUAL
+ * 🔥 DIRETRIZ 3: Isolamento total - NUNCA acessa socket
+ * ============================================
  */
 
 /**
- * 🔥 MELHORADA: Bloqueia o bot para um usuário (atendimento manual assumido)
+ * 🔥 BLOQUEIA BOT: Ativa atendimento manual (Diretriz 3)
+ * ⚠️ CRÍTICO: Esta função NUNCA deve tocar no socket
  * @param {string} jid - JID do WhatsApp
+ * @returns {Promise<void>} Sempre retorna Promise para compatibilidade
  */
-export function blockBotForUser(jid) {
+export async function blockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
   const blockedAt = new Date();
+  const timestamp = blockedAt.toLocaleTimeString('pt-BR');
   
-  // 🔥 CORREÇÃO: manualAttendanceCache é a FONTE ÚNICA DE VERDADE
+  // 🔥 DIRETRIZ 3: manualAttendanceCache é a FONTE ÚNICA DE VERDADE
   manualAttendanceCache.set(phone, {
     blockedAt: blockedAt, // Date object, não string
     blockedBy: process.env.OWNER_NAME || 'Roberto'
   });
   
-  // Atualiza userCache apenas para manter sincronizado (mas manualAttendanceCache é a fonte)
+  // Atualiza userCache apenas para manter sincronizado
   const user = userCache.get(phone);
   if (user) {
     user.blockedAt = blockedAt;
     userCache.set(phone, user);
   }
   
-  log('WARNING', `🚫 Bot bloqueado para: ${phone} (atendimento manual)`);
+  // 🔥 DIRETRIZ 10: Log com timestamp e telefone
+  log('WARNING', `🚫 [${timestamp}] Bot bloqueado para: ${phone} (atendimento manual)`);
 }
 
 /**
- * 🔥 MELHORADA: Libera o bot para um usuário (volta para automático)
+ * 🔥 LIBERA BOT: Desativa atendimento manual (Diretriz 3)
+ * ⚠️ CRÍTICO: Esta função NUNCA deve tocar no socket
  * @param {string} jid - JID do WhatsApp
+ * @returns {Promise<void>} Sempre retorna Promise para compatibilidade
  */
-export function unblockBotForUser(jid) {
+export async function unblockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  // 🔥 CORREÇÃO: Remove do manualAttendanceCache (fonte única)
+  // 🔥 DIRETRIZ 3: Remove do manualAttendanceCache (fonte única)
   manualAttendanceCache.del(phone);
   
   // Sincroniza userCache
@@ -273,32 +285,35 @@ export function unblockBotForUser(jid) {
     userCache.set(phone, user);
   }
   
-  log('SUCCESS', `✅ Bot liberado para: ${phone} (automático novamente)`);
+  // 🔥 DIRETRIZ 10: Log com timestamp e telefone
+  log('SUCCESS', `✅ [${timestamp}] Bot liberado para: ${phone} (automático novamente)`);
 }
 
 /**
- * 🔥 MELHORADA: Verifica se o bot está bloqueado para um usuário
+ * 🔥 VERIFICA BLOQUEIO: Consulta status de bloqueio (Diretriz 4)
+ * 🔥 DIRETRIZ 5: Verifica expiração automática
  * @param {string} jid - JID do WhatsApp
- * @returns {boolean}
+ * @returns {Promise<boolean>} Retorna Promise para compatibilidade com async/await
  */
-export function isBotBlockedForUser(jid) {
+export async function isBotBlockedForUser(jid) {
   const phone = extractPhoneNumber(jid);
   
-  // 🔥 CORREÇÃO: Verifica no manualAttendanceCache (fonte única)
+  // 🔥 DIRETRIZ 3: Verifica no manualAttendanceCache (fonte única)
   const manualAttendance = manualAttendanceCache.get(phone);
   
   if (!manualAttendance) {
     return false; // Não está bloqueado
   }
   
-  // 🔥 NOVO: Verifica se bloqueio expirou
+  // 🔥 DIRETRIZ 5: Verifica se bloqueio expirou
   if (isBlockExpired(manualAttendance.blockedAt)) {
-    // Desbloqueia automaticamente
-    unblockBotForUser(jid);
+    const timestamp = new Date().toLocaleTimeString('pt-BR');
     
-    if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `⏰ Bloqueio expirado e removido para: ${phone}`);
-    }
+    // 🔥 DIRETRIZ 10: Log com timestamp
+    log('INFO', `⏰ [${timestamp}] Bloqueio expirado e removido para: ${phone}`);
+    
+    // Desbloqueia automaticamente
+    await unblockBotForUser(jid);
     
     return false;
   }
@@ -319,16 +334,20 @@ export function getBlockedUsers() {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Limpa bloqueios expirados (chamada periodicamente)
- * @returns {number} Quantidade de bloqueios removidos
+ * 🔥 CLEANUP PERIÓDICO: Remove bloqueios expirados (Diretriz 5)
+ * Chamada a cada 5 minutos pelo index.js
+ * @returns {Promise<number>} Quantidade de bloqueios removidos
  */
-export function cleanExpiredBlocks() {
+export async function cleanExpiredBlocks() {
   const keys = manualAttendanceCache.keys();
   let cleaned = 0;
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  keys.forEach(phone => {
+  for (const phone of keys) {
     const attendance = manualAttendanceCache.get(phone);
+    
     if (attendance && isBlockExpired(attendance.blockedAt)) {
+      // Remove do cache principal
       manualAttendanceCache.del(phone);
       
       // Sincroniza userCache
@@ -339,19 +358,26 @@ export function cleanExpiredBlocks() {
       }
       
       cleaned++;
-      log('INFO', `🧹 Bloqueio expirado removido: ${phone}`);
+      
+      // 🔥 DIRETRIZ 10: Log com timestamp e telefone
+      log('INFO', `🧹 [${timestamp}] Bloqueio expirado removido: ${phone}`);
     }
-  });
+  }
   
   if (cleaned > 0) {
-    log('SUCCESS', `✅ ${cleaned} bloqueio(s) expirado(s) removido(s)`);
+    // 🔥 DIRETRIZ 7: Log descritivo sem interromper fluxo
+    log('SUCCESS', `✅ [${timestamp}] ${cleaned} bloqueio(s) expirado(s) removido(s)`);
+  } else if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `🧹 [${timestamp}] Cleanup executado: nenhum bloqueio expirado encontrado`);
   }
   
   return cleaned;
 }
 
 /**
+ * ============================================
  * ESTATÍSTICAS
+ * ============================================
  */
 
 /**
@@ -375,7 +401,7 @@ export function getStats() {
     }
   });
   
-  // 🔥 CORREÇÃO: Conta apenas bloqueios NÃO expirados
+  // 🔥 DIRETRIZ 5: Conta apenas bloqueios NÃO expirados
   const blockedKeys = manualAttendanceCache.keys();
   blockedKeys.forEach(phone => {
     const attendance = manualAttendanceCache.get(phone);
@@ -401,7 +427,7 @@ export function getAllUsers() {
   return keys.map(key => {
     const user = userCache.get(key);
     
-    // Sincroniza blockedAt
+    // 🔥 DIRETRIZ 3: Sincroniza blockedAt
     const manualAttendance = manualAttendanceCache.get(key);
     if (manualAttendance?.blockedAt) {
       user.blockedAt = normalizeDate(manualAttendance.blockedAt);
@@ -417,20 +443,24 @@ export function getAllUsers() {
  */
 export function clearUser(jid) {
   const phone = extractPhoneNumber(jid);
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
+  
   userCache.del(phone);
   manualAttendanceCache.del(phone);
   
-  log('INFO', `🗑️ Cache limpo para: ${phone}`);
+  log('INFO', `🗑️ [${timestamp}] Cache limpo para: ${phone}`);
 }
 
 /**
  * Limpa todo o cache
  */
 export function clearAllCache() {
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
+  
   userCache.flushAll();
   manualAttendanceCache.flushAll();
   
-  log('WARNING', '🗑️ Todo o cache foi limpo!');
+  log('WARNING', `🗑️ [${timestamp}] Todo o cache foi limpo!`);
 }
 
 /**
@@ -452,37 +482,49 @@ export function exportData() {
 export function printStats() {
   const stats = getStats();
   
-  console.log('\n📊 ╔═══════════════════════════════════════════╗');
+  console.log('\n📊 ╔═══════════════════════════════════════╗');
   console.log('📊 ESTATÍSTICAS DO BOT');
-  console.log('📊 ╚═══════════════════════════════════════════╝');
+  console.log('📊 ╚═══════════════════════════════════════╝');
   console.log(`👥 Total de usuários: ${stats.totalUsers}`);
   console.log(`🎯 Novos leads: ${stats.newLeads}`);
   console.log(`🔄 Clientes recorrentes: ${stats.returningClients}`);
   console.log(`🚫 Em atendimento manual: ${stats.usersInManualAttendance}`);
-  console.log('📊 ╚═══════════════════════════════════════════╝\n');
+  console.log('📊 ╚═══════════════════════════════════════╝\n');
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Salva histórico de conversa (chamada pelo messageHandler)
- * Armazena mensagens trocadas em memória (pode evoluir para salvar em arquivo ou DB)
+ * 🔥 SALVA HISTÓRICO: Armazena mensagens trocadas
  * @param {string} jid - JID do WhatsApp
- * @param {string} message - Mensagem enviada ou recebida
- * @param {'in'|'out'} direction - Direção da mensagem
+ * @param {Array} messages - Array de mensagens [{role, content}]
  */
-export function saveConversationHistory(jid, message, direction = 'in') {
+export function saveConversationHistory(jid, messages) {
   const phone = extractPhoneNumber(jid);
   const key = `history_${phone}`;
   const existing = userCache.get(key) || [];
-  const entry = {
-    timestamp: new Date().toISOString(),
-    direction,
-    message
-  };
-  existing.push(entry);
+  
+  // Se messages for array de objetos {role, content}
+  if (Array.isArray(messages)) {
+    messages.forEach(msg => {
+      existing.push({
+        timestamp: new Date().toISOString(),
+        role: msg.role || 'user',
+        content: msg.content || msg
+      });
+    });
+  } else {
+    // Fallback para string simples
+    existing.push({
+      timestamp: new Date().toISOString(),
+      role: 'user',
+      content: messages
+    });
+  }
+  
   userCache.set(key, existing);
   
   if (process.env.DEBUG_MODE === 'true') {
-    log('INFO', `💬 Histórico salvo para ${phone} (${direction}): ${message}`);
+    const timestamp = new Date().toLocaleTimeString('pt-BR');
+    log('INFO', `💬 [${timestamp}] Histórico salvo para ${phone}`);
   }
 }
 
