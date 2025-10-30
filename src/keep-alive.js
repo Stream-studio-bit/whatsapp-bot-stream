@@ -7,8 +7,10 @@ const RENDER_URL = process.env.RENDER_URL || 'https://whatsapp-bot-stream.onrend
  * Faz ping a cada 10 minutos para manter o bot acordado
  */
 function keepAlive() {
-  // Verifica se está no ambiente Render
-  if (!process.env.RENDER) {
+  // 🔥 CORREÇÃO: Checagem robusta de ambiente Render
+  const isRender = String(process.env.RENDER || '').toLowerCase() === 'true' || process.env.RENDER === '1';
+  
+  if (!isRender) {
     console.log('ℹ️  Keep-alive desabilitado (ambiente local)');
     return;
   }
@@ -17,18 +19,34 @@ function keepAlive() {
     console.log('⚠️  RENDER_URL não configurada. Usando URL padrão:', RENDER_URL);
   }
   
-  setInterval(() => {
+  // 🔥 CORREÇÃO: Função de ping reutilizável
+  const ping = () => {
     const url = RENDER_URL + '/health';
     
-    https.get(url, (res) => {
+    // 🔥 CORREÇÃO: Adiciona timeout de 10 segundos
+    const req = https.get(url, { timeout: 10000 }, (res) => {
       console.log(`✅ Keep-alive ping: ${res.statusCode} - ${new Date().toLocaleTimeString()}`);
-    }).on('error', (err) => {
+    });
+    
+    req.on('error', (err) => {
       console.log(`❌ Keep-alive erro: ${err.message}`);
     });
-  }, 10 * 60 * 1000); // 10 minutos
+    
+    // 🔥 CORREÇÃO: Tratamento de timeout
+    req.on('timeout', () => {
+      req.destroy();
+      console.log(`⏱️  Keep-alive timeout (10s excedido)`);
+    });
+  };
   
+  // 🔥 CORREÇÃO: Primeiro ping imediato
   console.log('🔄 Keep-alive ativado! Ping a cada 10 minutos.');
   console.log(`📍 URL monitorada: ${RENDER_URL}/health\n`);
+  
+  ping(); // Ping imediato
+  
+  // Pings subsequentes a cada 10 minutos
+  setInterval(ping, 10 * 60 * 1000);
 }
 
 export default keepAlive;

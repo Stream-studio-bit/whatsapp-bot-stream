@@ -38,17 +38,19 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
  */
 function isOwner(jid) {
   const phone = extractPhoneNumber(jid);
-  const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, ''); // Remove não-numéricos
+  
+  // 🔥 CORREÇÃO: Validação robusta contra grupos/jids inválidos
+  if (!phone) return false;
+  
+  const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, '');
   
   if (!ownerPhone) {
     log('WARNING', '⚠️ OWNER_PHONE não configurado no .env - Comandos desabilitados!');
     return false;
   }
   
-  // 🔥 CORREÇÃO: Normaliza ambos os números para comparação
   const cleanPhone = phone.replace(/\D/g, '');
   
-  // Verifica se é exatamente igual OU se termina com o número (compatibilidade com prefixos)
   const isOwnerUser = cleanPhone === ownerPhone || cleanPhone.endsWith(ownerPhone);
   
   if (process.env.DEBUG_MODE === 'true') {
@@ -77,9 +79,12 @@ async function handleCommand(sock, message) {
     
     if (!isCommand) return false;
     
+    // 🔥 CORREÇÃO: Normaliza comando para uppercase
+    const cmd = command?.toUpperCase?.() || '';
+    
     const pushName = message.pushName || 'Usuário';
     
-    log('INFO', `⚙️ Comando detectado: ${command} de ${pushName} (${phone})`);
+    log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName} (${phone})`);
     
     // 🔥 VERIFICAÇÃO DE PERMISSÃO: Apenas o dono pode usar comandos
     if (!isOwner(jid)) {
@@ -89,7 +94,7 @@ async function handleCommand(sock, message) {
         text: `❌ Desculpe, apenas o administrador pode usar comandos do sistema.` 
       });
       
-      return true; // Retorna true para não processar como mensagem normal
+      return true;
     }
     
     log('SUCCESS', `✅ Comando autorizado de owner: ${pushName}`);
@@ -97,10 +102,12 @@ async function handleCommand(sock, message) {
     // ============================================
     // Comando: /assumir (Bloqueia bot)
     // ============================================
-    if (command === 'ASSUME') {
-      blockBotForUser(jid);
+    if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
+      // 🔥 CORREÇÃO: Adiciona await
+      await blockBotForUser(jid);
       
-      const user = getUser(jid);
+      // 🔥 CORREÇÃO: Adiciona await
+      const user = await getUser(jid);
       const userName = user?.name || pushName;
       
       log('SUCCESS', `🔒 Bot BLOQUEADO para ${userName} (${phone}) - Atendimento manual ativo`);
@@ -123,9 +130,9 @@ async function handleCommand(sock, message) {
     // ============================================
     // Comando: /liberar (Desbloqueia bot)
     // ============================================
-    if (command === 'RELEASE') {
-      // Verifica se já estava desbloqueado
-      if (!isBotBlockedForUser(jid)) {
+    if (cmd === 'RELEASE' || cmd === 'LIBERAR') {
+      // 🔥 CORREÇÃO: Adiciona await
+      if (!(await isBotBlockedForUser(jid))) {
         log('INFO', `ℹ️ Bot já estava ativo para ${phone}`);
         
         await sock.sendMessage(jid, { 
@@ -138,9 +145,11 @@ Nenhuma ação necessária.`
         return true;
       }
       
-      unblockBotForUser(jid);
+      // 🔥 CORREÇÃO: Adiciona await
+      await unblockBotForUser(jid);
       
-      const user = getUser(jid);
+      // 🔥 CORREÇÃO: Adiciona await
+      const user = await getUser(jid);
       const userName = user?.name || pushName;
       
       log('SUCCESS', `🤖 Bot LIBERADO para ${userName} (${phone}) - IA reativada`);
@@ -163,7 +172,9 @@ Nenhuma ação necessária.`
     
   } catch (error) {
     log('ERROR', `❌ Erro ao processar comando: ${error.message}`);
-    console.error(error);
+    if (process.env.DEBUG_MODE === 'true') {
+      console.error(error.stack);
+    }
     return false;
   }
 }
@@ -200,26 +211,27 @@ export async function handleIncomingMessage(sock, message) {
     const isCommandProcessed = await handleCommand(sock, message);
     if (isCommandProcessed) {
       log('INFO', `⚙️ Comando processado com sucesso para ${pushName}`);
-      return; // Comando executado, não continua processamento
+      return;
     }
 
     // ============================================
     // PASSO 3: Verifica se bot está bloqueado
-    // 🔥 CORREÇÃO: A verificação de expiração agora está dentro de isBotBlockedForUser()
+    // 🔥 CORREÇÃO: Adiciona await
     // ============================================
-    if (isBotBlockedForUser(jid)) {
+    if (await isBotBlockedForUser(jid)) {
       log('WARNING', `🚫 Bot bloqueado para ${pushName} (${phone}) - Atendimento manual ativo`);
-      return; // Não responde - Roberto está atendendo
+      return;
     }
 
     // ============================================
     // PASSO 4: NOVO LEAD? (Interessado no bot)
-    // 🔥 CORREÇÃO CRÍTICA: Só detecta como novo lead se NÃO for lead existente
+    // 🔥 CORREÇÃO: Adiciona await
     // ============================================
-    if (!isLeadUser(jid) && isNewLead(cleanedMessage)) {
+    if (!(await isLeadUser(jid)) && isNewLead(cleanedMessage)) {
       log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName} (${phone})`);
       
-      markAsNewLead(jid, pushName);
+      // 🔥 CORREÇÃO: Adiciona await
+      await markAsNewLead(jid, pushName);
       
       await simulateTyping(sock, jid, 2000);
       const welcomeMsg = await generateWelcomeMessage(pushName, true);
@@ -231,11 +243,13 @@ export async function handleIncomingMessage(sock, message) {
 
     // ============================================
     // PASSO 5: LEAD CONHECIDO? (Continuação)
+    // 🔥 CORREÇÃO: Adiciona await
     // ============================================
-    if (isLeadUser(jid)) {
+    if (await isLeadUser(jid)) {
       log('INFO', `🎯 Mensagem de LEAD existente: ${pushName} (${phone})`);
       
-      saveUser(jid, { name: pushName });
+      // 🔥 CORREÇÃO: Adiciona await
+      await saveUser(jid, { name: pushName });
       
       await simulateTyping(sock, jid, 3000);
       const aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
@@ -254,16 +268,18 @@ export async function handleIncomingMessage(sock, message) {
 
     // ============================================
     // PASSO 6: CLIENTE EXISTENTE COM CONVERSA ATIVA
+    // 🔥 CORREÇÃO: Adiciona await
     // ============================================
-    if (isExistingUser(jid) && hasOngoingConversation(jid)) {
-      const user = getUser(jid);
+    if (await isExistingUser(jid) && await hasOngoingConversation(jid)) {
+      // 🔥 CORREÇÃO: Adiciona await
+      const user = await getUser(jid);
       log('INFO', `🔄 Cliente RECORRENTE: ${user.name} (${phone})`);
       
-      // 🔥 CORREÇÃO: Só envia boas-vindas se for saudação E não tiver histórico recente
       if (isGreeting(cleanedMessage)) {
         log('INFO', `👋 Saudação detectada de cliente recorrente: ${user.name}`);
         
-        saveUser(jid, { name: pushName });
+        // 🔥 CORREÇÃO: Adiciona await
+        await saveUser(jid, { name: pushName });
         
         await simulateTyping(sock, jid, 2000);
         const welcomeMsg = await generateWelcomeMessage(user.name, false);
@@ -274,7 +290,8 @@ export async function handleIncomingMessage(sock, message) {
       }
       
       // Mensagem normal de cliente recorrente
-      saveUser(jid, { name: pushName });
+      // 🔥 CORREÇÃO: Adiciona await
+      await saveUser(jid, { name: pushName });
       
       await simulateTyping(sock, jid, 2500);
       const aiResponse = await processClientMessage(phone, user.name, cleanedMessage);
@@ -289,7 +306,8 @@ export async function handleIncomingMessage(sock, message) {
     // ============================================
     log('INFO', `🆕 Primeiro contato ou conversa antiga: ${pushName} (${phone})`);
     
-    saveUser(jid, { name: pushName, isNewLead: false });
+    // 🔥 CORREÇÃO: Adiciona await
+    await saveUser(jid, { name: pushName, isNewLead: false });
     
     // Se for uma saudação, envia boas-vindas
     if (isGreeting(cleanedMessage)) {
@@ -310,7 +328,9 @@ export async function handleIncomingMessage(sock, message) {
 
   } catch (error) {
     log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
-    console.error(error);
+    if (process.env.DEBUG_MODE === 'true') {
+      console.error(error.stack);
+    }
   }
 }
 
