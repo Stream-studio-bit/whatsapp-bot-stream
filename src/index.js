@@ -24,6 +24,13 @@ import { removeUser, resetSystem, quickStatus, cleanupExpiredBlocks, backupData,
 dotenv.config();
 
 /**
+ * 🔥 FLAGS DE CONTROLE - PREVINE LOOP INFINITO
+ */
+let isServerInitialized = false;
+let isKeepAliveInitialized = false;
+let mongoClient = null;
+
+/**
  * CONFIGURAÇÕES GLOBAIS
  */
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -51,22 +58,49 @@ function showBanner() {
 }
 
 /**
+ * 🔥 INICIALIZAÇÃO ÚNICA - Roda apenas 1 vez
+ */
+function initializeOnce() {
+  // Inicia servidor HTTP (apenas 1 vez)
+  if (!isServerInitialized && process.env.RENDER) {
+    log('INFO', '🔧 Iniciando servidor HTTP...');
+    startServer();
+    isServerInitialized = true;
+  }
+  
+  // Inicia keep-alive (apenas 1 vez)
+  if (!isKeepAliveInitialized && process.env.RENDER) {
+    keepAlive();
+    isKeepAliveInitialized = true;
+  }
+  
+  // Valida configuração da Groq (apenas 1 vez)
+  if (!validateGroqConfig()) {
+    console.error('\n❌ Configure a API Key da Groq no arquivo .env antes de continuar!\n');
+    process.exit(1);
+  }
+  
+  // Valida MONGODB_URI (apenas 1 vez)
+  if (!MONGODB_URI) {
+    console.error('\n❌ Configure MONGODB_URI no arquivo .env antes de continuar!\n');
+    process.exit(1);
+  }
+}
+
+/**
  * Função para usar MongoDB como auth state
  */
 async function useMongoDBAuthState(collection) {
-  // Lê as credenciais do MongoDB
   const readCreds = async () => {
     const data = await collection.findOne({ _id: 'creds' });
     return data ? JSON.parse(JSON.stringify(data.value), BufferJSON.reviver) : null;
   };
 
-  // Lê uma chave específica
   const readKey = async (id) => {
     const data = await collection.findOne({ _id: id });
     return data ? JSON.parse(JSON.stringify(data.value), BufferJSON.reviver) : null;
   };
 
-  // Escreve dados no MongoDB
   const writeData = async (id, value) => {
     const data = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
     await collection.updateOne(
@@ -76,12 +110,10 @@ async function useMongoDBAuthState(collection) {
     );
   };
 
-  // Remove dados do MongoDB
   const removeData = async (id) => {
     await collection.deleteOne({ _id: id });
   };
 
-  // Carrega credenciais existentes ou cria novas
   let creds = await readCreds();
   if (!creds) {
     creds = initAuthCreds();
@@ -127,48 +159,26 @@ async function useMongoDBAuthState(collection) {
 }
 
 /**
- * INICIALIZA O BOT
+ * 🔥 CRIA CONEXÃO DO WHATSAPP (pode ser chamada múltiplas vezes para reconexão)
  */
-async function startBot() {
-  showBanner();
-  
-  // Inicia servidor HTTP se estiver no Render
-  if (process.env.RENDER) {
-    console.log('🔧 Ambiente Render detectado - iniciando servidor HTTP...');
-    startServer();
-    keepAlive();
-  }
-  
-  // Valida configuração da Groq
-  if (!validateGroqConfig()) {
-    console.error('\n❌ Configure a API Key da Groq no arquivo .env antes de continuar!\n');
-    process.exit(1);
-  }
-  
-  // Valida MONGODB_URI
-  if (!MONGODB_URI) {
-    console.error('\n❌ Configure MONGODB_URI no arquivo .env antes de continuar!\n');
-    process.exit(1);
-  }
-  
-  log('INFO', '🔄 Iniciando conexão com WhatsApp...');
-  
-  let mongoClient;
-  
+async function connectWhatsApp() {
   try {
+    log('INFO', '🔄 Iniciando conexão com WhatsApp...');
+    
     // Obtém versão mais recente do Baileys
     const { version, isLatest } = await fetchLatestBaileysVersion();
     log('SUCCESS', `✅ Baileys v${version.join('.')} ${isLatest ? '(latest)' : '(outdated)'}`);
     
-    // Conecta ao MongoDB
-    log('INFO', '🔗 Conectando ao MongoDB...');
-    mongoClient = new MongoClient(MONGODB_URI);
-    await mongoClient.connect();
+    // Conecta ao MongoDB (reutiliza conexão se já existe)
+    if (!mongoClient) {
+      log('INFO', '🔗 Conectando ao MongoDB...');
+      mongoClient = new MongoClient(MONGODB_URI);
+      await mongoClient.connect();
+      log('SUCCESS', '✅ MongoDB conectado com sucesso!');
+    }
     
     const db = mongoClient.db('baileys_auth');
     const collection = db.collection(SESSION_ID);
-    
-    log('SUCCESS', '✅ MongoDB conectado com sucesso!');
     
     // Usa MongoDB para auth state
     const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
@@ -210,12 +220,15 @@ async function startBot() {
           : true;
         
         if (shouldReconnect) {
-          log('WARNING', '⚠️  Conexão perdida. Reconectando...');
-          setTimeout(() => startBot(), 3000);
+          log('WARNING', '⚠️  Conexão perdida. Reconectando em 3 segundos...');
+          setTimeout(() => connectWhatsApp(), 3000); // 🔥 APENAS reconecta WhatsApp
         } else {
           log('ERROR', '❌ Desconectado. Limpando credenciais...');
           await clearAll();
-          await mongoClient.close();
+          if (mongoClient) {
+            await mongoClient.close();
+            mongoClient = null;
+          }
           process.exit(0);
         }
       }
@@ -232,8 +245,8 @@ async function startBot() {
         
         // Instruções
         console.log('📋 COMANDOS DISPONÍVEIS (envie para o cliente):');
-        console.log(`   • ${process.env.COMMAND_ASSUME} - Assumir atendimento manual`);
-        console.log(`   • ${process.env.COMMAND_RELEASE} - Liberar bot automático`);
+        console.log(`   • ${process.env.COMMAND_ASSUME || '/assumir'} - Assumir atendimento manual`);
+        console.log(`   • ${process.env.COMMAND_RELEASE || '/liberar'} - Liberar bot automático`);
         console.log('\n💡 DICA: Ao enviar qualquer mensagem para um cliente,');
         console.log('   o bot automaticamente para de responder (atendimento manual).\n');
         
@@ -276,21 +289,32 @@ async function startBot() {
       }
     });
     
-    // ============================================
-    // COMANDOS NO CONSOLE
-    // ============================================
-    setupConsoleCommands();
-    
     return sock;
     
   } catch (error) {
-    log('ERROR', `❌ Erro ao iniciar bot: ${error.message}`);
+    log('ERROR', `❌ Erro ao conectar WhatsApp: ${error.message}`);
     console.error(error);
-    if (mongoClient) {
-      await mongoClient.close();
-    }
-    process.exit(1);
+    
+    // Tenta reconectar após erro
+    log('INFO', '🔄 Tentando reconectar em 5 segundos...');
+    setTimeout(() => connectWhatsApp(), 5000);
   }
+}
+
+/**
+ * 🔥 INICIALIZA O BOT (chamada apenas 1 vez)
+ */
+async function startBot() {
+  showBanner();
+  
+  // Inicializa componentes únicos (servidor, keep-alive, validações)
+  initializeOnce();
+  
+  // Configura comandos no console
+  setupConsoleCommands();
+  
+  // Conecta ao WhatsApp (pode reconectar automaticamente)
+  await connectWhatsApp();
 }
 
 /**
@@ -358,15 +382,25 @@ process.on('uncaughtException', (err) => {
 /**
  * Tratamento de encerramento gracioso
  */
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado pelo usuário');
+  
+  if (mongoClient) {
+    await mongoClient.close();
+  }
+  
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado');
+  
+  if (mongoClient) {
+    await mongoClient.close();
+  }
+  
   process.exit(0);
 });
 
