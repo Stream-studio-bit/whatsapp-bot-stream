@@ -36,13 +36,13 @@ const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
  */
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔═══════════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚═══════════════════════════════════════════════════════════════╝');
+  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝');
   console.log('');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot Name: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
@@ -196,11 +196,11 @@ async function startBot() {
       
       // Mostra QR Code
       if (qr) {
-        console.log('\n📱 ═══════════════════════════════════════════════════════');
+        console.log('\n📱 ═══════════════════════════════════════════════════');
         console.log('📱 ESCANEIE O QR CODE ABAIXO COM SEU WHATSAPP BUSINESS');
-        console.log('📱 ═══════════════════════════════════════════════════════\n');
+        console.log('📱 ═══════════════════════════════════════════════════\n');
         qrcode.generate(qr, { small: true });
-        console.log('\n📱 ═══════════════════════════════════════════════════════\n');
+        console.log('\n📱 ═══════════════════════════════════════════════════\n');
       }
       
       // Conexão fechada
@@ -223,9 +223,9 @@ async function startBot() {
       // Conectado
       if (connection === 'open') {
         log('SUCCESS', '✅ Conectado ao WhatsApp com sucesso!');
-        console.log('\n🎉 ═══════════════════════════════════════════════════════');
+        console.log('\n🎉 ═══════════════════════════════════════════════════');
         console.log('🎉 BOT ONLINE E FUNCIONANDO!');
-        console.log('🎉 ═══════════════════════════════════════════════════════\n');
+        console.log('🎉 ═══════════════════════════════════════════════════\n');
         
         // Mostra estatísticas
         printStats();
@@ -254,14 +254,6 @@ async function startBot() {
         try {
           // Ignora mensagens próprias
           if (message.key.fromMe) {
-            // Processa comandos e auto-bloqueio do Roberto
-            const isCommand = await handleCommand(sock, message);
-            
-            if (!isCommand) {
-              // Se não é comando, verifica auto-bloqueio
-              await handleOwnerMessage(sock, message);
-            }
-            
             continue;
           }
           
