@@ -19,7 +19,7 @@ import { validateGroqConfig } from './config/groq.js';
 import { log } from './utils/helpers.js';
 import { printStats } from './services/database.js';
 import { processMessage } from './controllers/messageHandler.js';
-import { handleCommand, handleOwnerMessage, showStats, listBlockedUsers, listAllUsers } from './controllers/commandHandler.js';
+import { removeUser, resetSystem, quickStatus, cleanupExpiredBlocks, backupData, showHelpMenu, showStats, showUserDetails, listBlockedUsers, listAllUsers } from './controllers/commandHandler.js';
 
 dotenv.config();
 
