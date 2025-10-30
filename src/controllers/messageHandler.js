@@ -169,7 +169,7 @@ Nenhuma ação necessária.`
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL DE MENSAGENS
+ * 🔥 HANDLER PRINCIPAL DE MENSAGENS - CORRIGIDO
  * Processa todas as mensagens recebidas e decide a ação
  */
 export async function handleIncomingMessage(sock, message) {
@@ -214,8 +214,9 @@ export async function handleIncomingMessage(sock, message) {
 
     // ============================================
     // PASSO 4: NOVO LEAD? (Interessado no bot)
+    // 🔥 CORREÇÃO CRÍTICA: Só detecta como novo lead se NÃO for lead existente
     // ============================================
-    if (isNewLead(cleanedMessage)) {
+    if (!isLeadUser(jid) && isNewLead(cleanedMessage)) {
       log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName} (${phone})`);
       
       markAsNewLead(jid, pushName);
@@ -258,7 +259,7 @@ export async function handleIncomingMessage(sock, message) {
       const user = getUser(jid);
       log('INFO', `🔄 Cliente RECORRENTE: ${user.name} (${phone})`);
       
-      // Se for uma saudação, envia boas-vindas
+      // 🔥 CORREÇÃO: Só envia boas-vindas se for saudação E não tiver histórico recente
       if (isGreeting(cleanedMessage)) {
         log('INFO', `👋 Saudação detectada de cliente recorrente: ${user.name}`);
         
