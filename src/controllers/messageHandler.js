@@ -19,7 +19,8 @@ import {
   isLeadUser,
   isBotBlockedForUser,
   blockBotForUser,
-  unblockBotForUser
+  unblockBotForUser,
+  saveConversationHistory
 } from '../services/database.js';
 
 import {
@@ -91,7 +92,6 @@ async function handleCommand(sock, message) {
     if (!isOwner(jid)) {
       log('WARNING', `🚫 Tentativa de comando por usuário NÃO AUTORIZADO: ${pushName} (${phone})`);
       
-      // 🔥 CORREÇÃO: Envia mensagem de forma segura (sem await desnecessário)
       await sock.sendMessage(jid, { 
         text: `❌ Desculpe, apenas o administrador pode usar comandos do sistema.` 
       }).catch(err => {
@@ -107,8 +107,12 @@ async function handleCommand(sock, message) {
     // Comando: /assumir (Bloqueia bot)
     // ============================================
     if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
+      log('INFO', `🔒 Executando bloqueio para ${jid}...`);
+      
       // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
       const blockResult = await blockBotForUser(jid);
+      
+      log('INFO', `📊 Resultado do bloqueio: ${blockResult ? '✅ Sucesso' : '❌ Falha'}`);
       
       if (!blockResult) {
         log('ERROR', `❌ Falha ao bloquear bot para ${phone}`);
@@ -145,8 +149,12 @@ async function handleCommand(sock, message) {
     // Comando: /liberar (Desbloqueia bot)
     // ============================================
     if (cmd === 'RELEASE' || cmd === 'LIBERAR') {
+      log('INFO', `🔓 Verificando status de bloqueio para ${jid}...`);
+      
       // 🔥 CORREÇÃO: Verifica se já está desbloqueado
       const isBlocked = await isBotBlockedForUser(jid);
+      
+      log('INFO', `📊 Status atual: ${isBlocked ? '🔒 Bloqueado' : '🔓 Ativo'}`);
       
       if (!isBlocked) {
         log('INFO', `ℹ️ Bot já estava ativo para ${phone}`);
@@ -161,8 +169,12 @@ Nenhuma ação necessária.`
         return true;
       }
       
+      log('INFO', `🔓 Executando desbloqueio para ${jid}...`);
+      
       // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
       const unblockResult = await unblockBotForUser(jid);
+      
+      log('INFO', `📊 Resultado do desbloqueio: ${unblockResult ? '✅ Sucesso' : '❌ Falha'}`);
       
       if (!unblockResult) {
         log('ERROR', `❌ Falha ao liberar bot para ${phone}`);
@@ -270,6 +282,18 @@ export async function handleIncomingMessage(sock, message) {
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(err => {
         log('ERROR', `❌ Erro ao enviar boas-vindas para LEAD: ${err.message}`);
       });
+      
+      // 🔥 CORREÇÃO: Salva boas-vindas no histórico para evitar saudação duplicada
+      try {
+        await saveConversationHistory(jid, [
+          { role: 'user', content: cleanedMessage },
+          { role: 'assistant', content: welcomeMsg }
+        ]);
+        
+        log('INFO', `💾 Histórico de boas-vindas salvo para ${pushName}`);
+      } catch (err) {
+        log('ERROR', `❌ Erro ao salvar histórico de boas-vindas: ${err.message}`);
+      }
       
       log('SUCCESS', `✅ Boas-vindas enviadas para LEAD: ${pushName}`);
       return;
@@ -390,17 +414,19 @@ export async function handleIncomingMessage(sock, message) {
 }
 
 /**
- * 🔥 CORREÇÃO: Wrapper seguro para processamento de mensagens
- * Processa mensagem - SEMPRE ATIVO 24/7
+ * 🔥 VERSÃO FINAL: Wrapper de processamento
+ * NÃO FAZ VALIDAÇÃO DE SOCKET - confia no evento do Baileys
  */
 export async function processMessage(sock, message) {
   try {
-    // 🔥 CORREÇÃO: Não valida o socket aqui
     await handleIncomingMessage(sock, message);
   } catch (error) {
-    // 🔥 CORREÇÃO: Não loga erros de conexão (muito verboso)
-    if (!error.message.includes('Connection')) {
-      log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
+    // Silencia erros de conexão
+    if (!error.message?.includes('Connection') && !error.message?.includes('Stream')) {
+      log('ERROR', `❌ Erro crítico: ${error.message}`);
+      if (process.env.DEBUG_MODE === 'true') {
+        console.error(error.stack);
+      }
     }
   }
 }
