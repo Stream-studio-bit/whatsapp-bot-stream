@@ -29,6 +29,14 @@ dotenv.config();
 let isServerInitialized = false;
 let isKeepAliveInitialized = false;
 let mongoClient = null;
+let isConnecting = false; // 🔥 NOVO: Previne múltiplas tentativas simultâneas
+let reconnectAttempts = 0; // 🔥 NOVO: Contador de tentativas
+const MAX_RECONNECT_ATTEMPTS = 10;
+
+/**
+ * 🔥 NOVA: Variável global para armazenar o socket
+ */
+let globalSock = null;
 
 /**
  * CONFIGURAÇÕES GLOBAIS
@@ -159,11 +167,68 @@ async function useMongoDBAuthState(collection) {
 }
 
 /**
+ * 🔥 NOVA: Verifica se conexão está estável
+ */
+function isConnectionStable(sock) {
+  if (!sock) return false;
+  
+  // Verifica se o socket existe e se tem função ws
+  if (!sock.ws || typeof sock.ws !== 'object') return false;
+  
+  // Verifica estado da conexão WebSocket
+  const wsState = sock.ws.readyState;
+  
+  // WebSocket.OPEN === 1 (conexão aberta)
+  return wsState === 1;
+}
+
+/**
+ * 🔥 MELHORADA: Aguarda conexão estável
+ */
+async function waitForConnection(sock, maxWaitMs = 10000) {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitMs) {
+    if (isConnectionStable(sock)) {
+      return true;
+    }
+    
+    // Aguarda 200ms antes de verificar novamente
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  
+  return false;
+}
+
+/**
  * 🔥 CRIA CONEXÃO DO WHATSAPP (pode ser chamada múltiplas vezes para reconexão)
  */
 async function connectWhatsApp() {
+  // 🔥 PROTEÇÃO: Previne múltiplas conexões simultâneas
+  if (isConnecting) {
+    log('WARNING', '⚠️  Já existe uma tentativa de conexão em andamento...');
+    return null;
+  }
+  
+  // 🔥 PROTEÇÃO: Limite de tentativas
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    log('ERROR', `❌ Limite de ${MAX_RECONNECT_ATTEMPTS} tentativas de reconexão atingido`);
+    log('INFO', '💡 Aguarde 2 minutos antes de tentar novamente ou reinicie o bot');
+    
+    // Reset contador após 2 minutos
+    setTimeout(() => {
+      reconnectAttempts = 0;
+      log('INFO', '🔄 Contador de tentativas resetado. Você pode tentar reconectar.');
+    }, 120000);
+    
+    return null;
+  }
+  
+  isConnecting = true;
+  reconnectAttempts++;
+  
   try {
-    log('INFO', '🔄 Iniciando conexão com WhatsApp...');
+    log('INFO', `🔄 Iniciando conexão com WhatsApp (Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
     
     // Obtém versão mais recente do Baileys
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -190,8 +255,17 @@ async function connectWhatsApp() {
       printQRInTerminal: false,
       auth: state,
       browser: ['Stream Studio Bot', 'Chrome', '1.0.0'],
-      markOnlineOnConnect: true
+      markOnlineOnConnect: true,
+      // 🔥 NOVO: Configurações de reconexão mais suaves
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 30000,
+      emitOwnEvents: false,
+      syncFullHistory: false
     });
+    
+    // Armazena socket globalmente
+    globalSock = sock;
     
     // ============================================
     // EVENTO: Atualização de credenciais
@@ -215,13 +289,20 @@ async function connectWhatsApp() {
       
       // Conexão fechada
       if (connection === 'close') {
+        isConnecting = false;
+        
         const shouldReconnect = (lastDisconnect?.error instanceof Boom) 
           ? lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut
           : true;
         
         if (shouldReconnect) {
-          log('WARNING', '⚠️  Conexão perdida. Reconectando em 3 segundos...');
-          setTimeout(() => connectWhatsApp(), 3000); // 🔥 APENAS reconecta WhatsApp
+          // 🔥 CORREÇÃO: Delay progressivo (3s, 5s, 10s, 15s...)
+          const delay = Math.min(3000 + (reconnectAttempts * 2000), 15000);
+          
+          log('WARNING', `⚠️  Conexão perdida. Reconectando em ${delay/1000} segundos...`);
+          log('INFO', `📊 Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+          
+          setTimeout(() => connectWhatsApp(), delay);
         } else {
           log('ERROR', '❌ Desconectado. Limpando credenciais...');
           await clearAll();
@@ -235,6 +316,9 @@ async function connectWhatsApp() {
       
       // Conectado
       if (connection === 'open') {
+        isConnecting = false;
+        reconnectAttempts = 0; // 🔥 RESET contador ao conectar com sucesso
+        
         log('SUCCESS', '✅ Conectado ao WhatsApp com sucesso!');
         console.log('\n🎉 ═══════════════════════════════════════════════════');
         console.log('🎉 BOT ONLINE E FUNCIONANDO!');
@@ -270,12 +354,29 @@ async function connectWhatsApp() {
             continue;
           }
           
+          // 🔥 NOVO: Verifica se conexão está estável antes de processar
+          if (!isConnectionStable(sock)) {
+            log('WARNING', '⚠️  Conexão instável - aguardando estabilização...');
+            
+            const stable = await waitForConnection(sock, 10000);
+            
+            if (!stable) {
+              log('ERROR', '❌ Conexão não estabilizou - mensagem não processada');
+              continue;
+            }
+          }
+          
           // Processa mensagem recebida
           await processMessage(sock, message);
           
         } catch (error) {
-          log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
-          console.error(error);
+          // 🔥 NOVO: Tratamento específico para Connection Closed
+          if (error.message.includes('Connection Closed')) {
+            log('WARNING', '⚠️  Conexão caiu durante processamento - mensagem será processada após reconexão');
+          } else {
+            log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
+            console.error(error);
+          }
         }
       }
     });
@@ -289,15 +390,20 @@ async function connectWhatsApp() {
       }
     });
     
+    isConnecting = false;
     return sock;
     
   } catch (error) {
+    isConnecting = false;
+    
     log('ERROR', `❌ Erro ao conectar WhatsApp: ${error.message}`);
     console.error(error);
     
-    // Tenta reconectar após erro
-    log('INFO', '🔄 Tentando reconectar em 5 segundos...');
-    setTimeout(() => connectWhatsApp(), 5000);
+    // 🔥 CORREÇÃO: Delay maior após erro (10 segundos)
+    log('INFO', '🔄 Tentando reconectar em 10 segundos...');
+    setTimeout(() => connectWhatsApp(), 10000);
+    
+    return null;
   }
 }
 
@@ -370,13 +476,24 @@ function setupConsoleCommands() {
  */
 process.on('unhandledRejection', (err) => {
   log('ERROR', `❌ Unhandled Rejection: ${err.message}`);
-  console.error(err);
+  
+  // 🔥 NOVO: Não encerra o processo por erro não tratado
+  if (process.env.DEBUG_MODE === 'true') {
+    console.error(err);
+  }
 });
 
 process.on('uncaughtException', (err) => {
   log('ERROR', `❌ Uncaught Exception: ${err.message}`);
   console.error(err);
-  process.exit(1);
+  
+  // 🔥 NOVO: Tenta reconectar ao invés de encerrar
+  if (err.message.includes('Connection') || err.message.includes('WebSocket')) {
+    log('INFO', '🔄 Tentando reconectar após erro de conexão...');
+    setTimeout(() => connectWhatsApp(), 5000);
+  } else {
+    process.exit(1);
+  }
 });
 
 /**
