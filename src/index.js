@@ -376,34 +376,36 @@ async function connectWhatsApp() {
     
     // ============================================
     // EVENTO: Novas mensagens
+    // 🔥 CORREÇÃO DEFINITIVA: Usa padrão recomendado do Baileys
     // ============================================
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    sock.ev.on('messages.upsert', async (m) => {
+      const { messages, type } = m;
+      
+      // Só processa mensagens novas
       if (type !== 'notify') return;
       
+      // 🔥 CORREÇÃO: Processa todas as mensagens do array (não só a primeira)
       for (const message of messages) {
         try {
           // Ignora mensagens próprias
-          if (message.key.fromMe) {
+          if (message.key.fromMe) continue;
+          
+          // 🔥 CORREÇÃO: Ignora mensagens sem conteúdo (messageStubType)
+          if (!message.message) {
+            if (process.env.DEBUG_MODE === 'true') {
+              log('INFO', '⏭️  Mensagem sem conteúdo ignorada (stub/system message)');
+            }
             continue;
           }
           
-          // 🔥 CORREÇÃO: Usa o socket atual do evento (mais confiável que globalSock)
-          // Apenas verifica se o socket existe, não o readyState
-          // (readyState pode estar temporariamente != 1 durante handshakes)
-          const activeSock = globalSock || sock;
-          
-          if (!activeSock) {
-            log('WARNING', '⚠️  Socket não disponível - aguardando reconexão');
-            continue;
-          }
-          
-          // Processa mensagem recebida
-          await processMessage(activeSock, message);
+          // 🔥 CORREÇÃO: Usa o sock do escopo (sempre válido dentro do evento)
+          // Não depende de globalSock que pode ser null durante reconexão
+          await processMessage(sock, message);
           
         } catch (error) {
-          // 🔥 Tratamento específico para Connection Closed
-          if (error.message.includes('Connection Closed')) {
-            log('WARNING', '⚠️  Conexão caiu durante processamento - mensagem será processada após reconexão');
+          // Trata erros silenciosamente para não crashar o evento
+          if (error.message?.includes('Connection')) {
+            log('WARNING', '⚠️  Conexão interrompida durante processamento');
           } else {
             log('ERROR', `❌ Erro ao processar mensagem: ${error.message}`);
             if (process.env.DEBUG_MODE === 'true') {
