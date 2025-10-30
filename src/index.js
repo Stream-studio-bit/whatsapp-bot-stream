@@ -387,14 +387,18 @@ async function connectWhatsApp() {
             continue;
           }
           
-          // 🔥 CORREÇÃO: Checagem simples de conexão (evita deadlocks)
-          if (!globalSock?.ws || globalSock.ws.readyState !== 1) {
-            log('WARNING', '⚠️  Socket não está pronto - mensagem ignorada');
+          // 🔥 CORREÇÃO: Usa o socket atual do evento (mais confiável que globalSock)
+          // Apenas verifica se o socket existe, não o readyState
+          // (readyState pode estar temporariamente != 1 durante handshakes)
+          const activeSock = globalSock || sock;
+          
+          if (!activeSock) {
+            log('WARNING', '⚠️  Socket não disponível - aguardando reconexão');
             continue;
           }
           
-          // Processa mensagem recebida (usa globalSock como fonte única)
-          await processMessage(globalSock, message);
+          // Processa mensagem recebida
+          await processMessage(activeSock, message);
           
         } catch (error) {
           // 🔥 Tratamento específico para Connection Closed
