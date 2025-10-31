@@ -33,18 +33,14 @@ import {
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 
 /**
- * 🔥 DEBOUNCE MAP - Previne processamento duplicado de bursts (Extra opcional)
- * Armazena timestamp da última mensagem por JID
+ * 🔥 DEBOUNCE MAP - Previne processamento duplicado
  */
 const lastMessageTime = new Map();
-const DEBOUNCE_DELAY = 500; // 500ms
+const DEBOUNCE_DELAY = 500;
 
-/**
- * 🔥 Limpa entradas antigas do debounce map (executado periodicamente)
- */
 function cleanupDebounceMap() {
   const now = Date.now();
-  const MAX_AGE = 60000; // 1 minuto
+  const MAX_AGE = 60000;
   
   for (const [jid, timestamp] of lastMessageTime.entries()) {
     if (now - timestamp > MAX_AGE) {
@@ -53,53 +49,44 @@ function cleanupDebounceMap() {
   }
 }
 
-// Limpa debounce map a cada 2 minutos
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 MELHORADA: Verifica se o número é do dono (Roberto)
- * @param {string} jid - JID do WhatsApp
- * @returns {boolean}
+ * 🔥 CORREÇÃO 3: Verifica se é owner (múltiplos formatos)
  */
 function isOwner(jid) {
   const phone = extractPhoneNumber(jid);
-  
-  // 🔥 CORREÇÃO: Validação robusta contra grupos/jids inválidos
   if (!phone) return false;
   
   const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, '');
   
   if (!ownerPhone) {
-    log('WARNING', '⚠️ OWNER_PHONE não configurado no .env - Comandos desabilitados!');
+    log('WARNING', '⚠️ OWNER_PHONE não configurado no .env');
     return false;
   }
   
   const cleanPhone = phone.replace(/\D/g, '');
   
-  const isOwnerUser = cleanPhone === ownerPhone || cleanPhone.endsWith(ownerPhone);
+  // 🔥 Aceita: 5513996723219, 13996723219, 996723219
+  const isMatch = 
+    cleanPhone === ownerPhone ||
+    cleanPhone.endsWith(ownerPhone) ||
+    ownerPhone.endsWith(cleanPhone);
   
   if (process.env.DEBUG_MODE === 'true') {
-    log('INFO', `🔍 Verificação de owner:`);
-    log('INFO', `   Telefone recebido: ${phone} (limpo: ${cleanPhone})`);
-    log('INFO', `   Owner configurado: ${ownerPhone}`);
-    log('INFO', `   É owner? ${isOwnerUser ? '✅ SIM' : '❌ NÃO'}`);
+    log('INFO', `🔍 Owner check: ${cleanPhone} vs ${ownerPhone} = ${isMatch}`);
   }
   
-  return isOwnerUser;
+  return isMatch;
 }
 
 /**
- * 🔥 TOTALMENTE REESCRITA: Processa comandos do sistema (/assumir e /liberar)
- * ⚠️ CRÍTICO: Esta função NUNCA deve tocar no socket além de enviar mensagens
- * 🔥 DIRETRIZ 1: Não reinicializa socket
- * 🔥 DIRETRIZ 3: Isolamento de bloqueio (só manipula database)
- * 🔥 DIRETRIZ 6: Confirmações não bloqueantes
- * @returns {boolean} true se foi um comando, false se não
+ * 🔥 CORREÇÃO 3: Processa comandos (PRIORIDADE MÁXIMA)
+ * Detecta: /assumir, !assumir, assumir, /liberar, etc
  */
 async function handleCommand(sock, message) {
   try {
     const jid = message.key.remoteJid;
-    const phone = extractPhoneNumber(jid);
     const messageText = extractMessageText(message);
     
     if (!messageText) return false;
@@ -108,372 +95,279 @@ async function handleCommand(sock, message) {
     
     if (!isCommand) return false;
     
-    // 🔥 CORREÇÃO: Normaliza comando para uppercase
-    const cmd = command?.toUpperCase?.() || '';
-    
+    const cmd = command?.toUpperCase() || '';
     const pushName = message.pushName || 'Usuário';
     
-    const timestamp = new Date().toLocaleTimeString('pt-BR');
-    log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName} (${phone}) às ${timestamp}`);
+    log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName}`);
     
-    // 🔥 VERIFICAÇÃO DE PERMISSÃO: Apenas o dono pode usar comandos
+    // 🔥 Verifica permissão ANTES de processar
     if (!isOwner(jid)) {
-      log('WARNING', `🚫 Tentativa de comando por usuário NÃO AUTORIZADO: ${pushName} (${phone})`);
+      log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
       
-      // 🔥 DIRETRIZ 6: Envio não bloqueante
       await sock.sendMessage(jid, { 
-        text: `❌ Desculpe, apenas o administrador pode usar comandos do sistema.` 
+        text: '❌ Apenas o administrador pode usar comandos.' 
       }).catch(() => {});
       
       return true;
     }
     
-    log('SUCCESS', `✅ Comando autorizado de owner: ${pushName}`);
+    log('SUCCESS', `✅ Comando autorizado de owner`);
     
     // ============================================
-    // Comando: /assumir (Bloqueia bot)
-    // 🔥 DIRETRIZ 3: Isolamento de bloqueio
+    // COMANDO: /assumir
     // ============================================
     if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
-      log('INFO', `🔒 Executando bloqueio para ${jid}...`);
-      
       try {
-        // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
-        // 🔥 DIRETRIZ 3: blockBotForUser só manipula database.js
         await blockBotForUser(jid);
         
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao bloquear bot no banco para ${phone}: ${err?.message || err}`);
+        log('SUCCESS', `🔒 Bot BLOQUEADO via comando`);
         
-        // 🔥 DIRETRIZ 6: Confirmação não bloqueante
         await sock.sendMessage(jid, { 
-          text: `❌ Erro ao bloquear bot. Tente novamente.` 
+          text: `✅ *Atendimento assumido!*\n\n🚫 Bot pausado.\n⏰ Expira em 1 hora.` 
+        }).catch(() => {});
+        
+        return true;
+        
+      } catch (err) {
+        log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
+        
+        await sock.sendMessage(jid, { 
+          text: '❌ Erro ao bloquear bot.' 
         }).catch(() => {});
         
         return true;
       }
-      
-      const user = await getUser(jid);
-      const userName = user?.name || pushName;
-      
-      log('SUCCESS', `🔒 Bot BLOQUEADO para ${userName} (${phone}) - Atendimento manual ativo`);
-      
-      // 🔥 DIRETRIZ 6: Envio não bloqueante com ephemeralExpiration
-      await sock.sendMessage(jid, { 
-        text: `✅ *Atendimento assumido!*
-
-🚫 O bot foi pausado para este número.
-👤 Você está em atendimento manual com: *${userName}*
-
-⏰ O bloqueio expirará automaticamente após 1 hora sem mensagens.
-
-💡 Para reativar o bot manualmente, envie:
-*${process.env.COMMAND_RELEASE || '/liberar'}*` 
-      }, { ephemeralExpiration: 0 }).catch(() => {});
-      
-      // Retorna true para indicar que foi comando e que não se deve prosseguir
-      return true;
     }
     
     // ============================================
-    // Comando: /liberar (Desbloqueia bot)
-    // 🔥 DIRETRIZ 3: Isolamento de bloqueio
+    // COMANDO: /liberar
     // ============================================
     if (cmd === 'RELEASE' || cmd === 'LIBERAR') {
-      log('INFO', `🔓 Verificando status de bloqueio para ${jid}...`);
-      
-      // 🔥 CORREÇÃO: Verifica se já está desbloqueado
       let isBlocked = false;
       try {
         isBlocked = await isBotBlockedForUser(jid);
       } catch (err) {
-        log('WARNING', `⚠️ Erro ao checar bloqueio para ${phone}: ${err?.message || err}`);
+        log('WARNING', `⚠️ Erro ao checar bloqueio: ${err.message}`);
       }
-      
-      log('INFO', `📊 Status atual: ${isBlocked ? '🔒 Bloqueado' : '🔓 Ativo'}`);
       
       if (!isBlocked) {
-        log('INFO', `ℹ️ Bot já estava ativo para ${phone}`);
-        
-        // 🔥 DIRETRIZ 6: Envio não bloqueante
         await sock.sendMessage(jid, { 
-          text: `ℹ️ *Bot já está ativo*
-
-🤖 O bot já estava respondendo automaticamente para este número.
-Nenhuma ação necessária.` 
-        }, { ephemeralExpiration: 0 }).catch(() => {});
-        
-        return true;
-      }
-      
-      log('INFO', `🔓 Executando desbloqueio para ${jid}...`);
-      
-      try {
-        // 🔥 CORREÇÃO CRÍTICA: APENAS atualiza banco, NUNCA mexe no socket
-        // 🔥 DIRETRIZ 3: unblockBotForUser só manipula database.js
-        await unblockBotForUser(jid);
-        
-      } catch (err) {
-        log('WARNING', `⚠️ Falha ao liberar bot no banco para ${phone}: ${err?.message || err}`);
-        
-        // 🔥 DIRETRIZ 6: Confirmação não bloqueante
-        await sock.sendMessage(jid, { 
-          text: `❌ Erro ao liberar bot. Tente novamente.` 
+          text: 'ℹ️ Bot já está ativo.' 
         }).catch(() => {});
         
         return true;
       }
       
-      const user = await getUser(jid);
-      const userName = user?.name || pushName;
-      
-      log('SUCCESS', `🤖 Bot LIBERADO para ${userName} (${phone}) - IA reativada`);
-      
-      // 🔥 DIRETRIZ 6: Envio não bloqueante com ephemeralExpiration
-      await sock.sendMessage(jid, { 
-        text: `✅ *Bot liberado!*
-
-🤖 O atendimento automático foi reativado.
-👤 Cliente: *${userName}*
-📱 Próximas mensagens serão processadas pela IA.
-
-💡 Para assumir novamente, envie:
-*${process.env.COMMAND_ASSUME || '/assumir'}*` 
-      }, { ephemeralExpiration: 0 }).catch(() => {});
-      
-      return true;
+      try {
+        await unblockBotForUser(jid);
+        
+        log('SUCCESS', `🔓 Bot LIBERADO via comando`);
+        
+        await sock.sendMessage(jid, { 
+          text: `✅ *Bot liberado!*\n\n🤖 Atendimento automático reativado.` 
+        }).catch(() => {});
+        
+        return true;
+        
+      } catch (err) {
+        log('WARNING', `⚠️ Erro ao liberar: ${err.message}`);
+        
+        await sock.sendMessage(jid, { 
+          text: '❌ Erro ao liberar bot.' 
+        }).catch(() => {});
+        
+        return true;
+      }
     }
     
     return false;
     
   } catch (error) {
-    // 🔥 DIRETRIZ 7: Logs não bloqueantes
     log('WARNING', `⚠️ Erro ao processar comando: ${error.message}`);
-    if (process.env.DEBUG_MODE === 'true') {
-      console.error(error.stack);
-    }
     return false;
   }
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL DE MENSAGENS - TOTALMENTE REESCRITO
- * Processa todas as mensagens recebidas e decide a ação
- * 🔥 DIRETRIZ 1: Nunca mexe no socket além de enviar mensagens
- * 🔥 DIRETRIZ 4: Verifica bloqueio logo no início
+ * 🔥 HANDLER PRINCIPAL - ORDEM CORRETA
+ * 1. Valida mensagem
+ * 2. Ignora próprias mensagens
+ * 3. Extrai texto
+ * 4. 🔥 DETECTA COMANDO (PRIORIDADE MÁXIMA)
+ * 5. Verifica bloqueio
+ * 6. 🔥 DETECTA LEAD (ANTES de processar)
+ * 7. Processa LEAD conhecido
+ * 8. Processa cliente existente
+ * 9. Processa primeiro contato
  */
 export async function handleIncomingMessage(sock, message) {
   try {
     // ============================================
-    // PASSO 1: VALIDAÇÕES RÁPIDAS E FIRA DE LOOP
-    // 🔥 DIRETRIZ 2: Evita loops de eventos
+    // PASSO 1-3: Validações básicas
     // ============================================
-    if (!isValidMessage(message)) {
-      return;
-    }
-
-    // 🔥 DIRETRIZ 2: PREVENÇÃO DE LOOP - ignora mensagens enviadas pelo próprio bot
-    if (message?.key?.fromMe) {
-      if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', `ℹ️ Ignorando mensagem originada pelo próprio bot (fromMe).`);
-      }
-      return;
-    }
+    if (!isValidMessage(message)) return;
+    
+    if (message?.key?.fromMe) return;
 
     const jid = message.key.remoteJid;
-    const phone = extractPhoneNumber(jid);
     const messageText = extractMessageText(message);
 
-    if (!messageText) {
-      return;
-    }
+    if (!messageText) return;
 
-    // 🔥 EXTRA OPCIONAL: DEBOUNCE - Previne burst de mensagens
+    // 🔥 DEBOUNCE
     const now = Date.now();
     const lastTime = lastMessageTime.get(jid) || 0;
     
-    if (now - lastTime < DEBOUNCE_DELAY) {
-      if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', `⏱️ Mensagem ignorada (debounce): ${jid}`);
-      }
-      return;
-    }
+    if (now - lastTime < DEBOUNCE_DELAY) return;
     
     lastMessageTime.set(jid, now);
 
     const cleanedMessage = cleanMessage(messageText);
     const pushName = message.pushName || 'Cliente';
+    const phone = extractPhoneNumber(jid);
     
-    // 🔥 DIRETRIZ 7: Log descritivo com timestamp
-    const timestamp = new Date().toLocaleTimeString('pt-BR');
-    const preview = cleanedMessage.substring(0, 50) + (cleanedMessage.length > 50 ? '...' : '');
-    log('INFO', `📩 [${timestamp}] ${pushName} (${phone}): "${preview}"`);
+    log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}"`);
 
     // ============================================
-    // PASSO 2: PROCESSA COMANDOS PRIMEIRO (PRIORIDADE MÁXIMA)
-    // 🔥 CORREÇÃO: Comandos são processados de forma isolada
+    // 🔥 PASSO 4: COMANDOS TÊM PRIORIDADE MÁXIMA
     // ============================================
     const isCommandProcessed = await handleCommand(sock, message);
     if (isCommandProcessed) {
-      log('INFO', `⚙️ Comando processado com sucesso para ${pushName}`);
+      log('INFO', `⚙️ Comando processado`);
       return;
     }
 
     // ============================================
-    // PASSO 3: 🔥 DIRETRIZ 4 - VERIFICA BLOQUEIO ANTES DO PROCESSAMENTO
-    // CRÍTICO: Esta verificação DEVE vir ANTES de qualquer processamento
+    // 🔥 PASSO 5: Verifica bloqueio
     // ============================================
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
     } catch (err) {
-      log('WARNING', `⚠️ Erro ao verificar bloqueio para ${phone}: ${err?.message || err}`);
-      // Em caso de erro ao checar, assumimos não bloqueado para não travar conversas
+      log('WARNING', `⚠️ Erro ao verificar bloqueio: ${err.message}`);
       isBlocked = false;
     }
 
     if (isBlocked) {
-      log('WARNING', `🚫 Bot bloqueado para ${pushName} (${phone}) - Atendimento manual ativo`);
-      return; // 🔥 DIRETRIZ 1: Apenas retorna, não toca no socket
+      log('WARNING', `🚫 Bot bloqueado para ${pushName}`);
+      return;
     }
 
     // ============================================
-    // PASSO 4: NOVO LEAD? (Interessado no bot)
+    // 🔥 PASSO 6: DETECTA LEAD PRIMEIRO (ANTES de processar)
     // ============================================
     const isLead = await isLeadUser(jid);
     
     if (!isLead && isNewLead(cleanedMessage)) {
-      log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName} (${phone})`);
+      log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName}`);
       
       await markAsNewLead(jid, pushName);
       
-      // 🔥 CORREÇÃO: simulateTyping otimizado (máx 1500ms)
       await simulateTyping(sock, jid, 1500);
       
       const welcomeMsg = await generateWelcomeMessage(pushName, true);
       
-      // 🔥 DIRETRIZ 6: Envio não bloqueante
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
-      // 🔥 CORREÇÃO: Salva boas-vindas no histórico para evitar saudação duplicada
+      // 🔥 Salva no histórico para evitar duplicação
       try {
         await saveConversationHistory(jid, [
           { role: 'user', content: cleanedMessage },
           { role: 'assistant', content: welcomeMsg }
         ]);
-        
-        log('INFO', `💾 Histórico de boas-vindas salvo para ${pushName}`);
       } catch (err) {
-        log('WARNING', `⚠️ Erro ao salvar histórico de boas-vindas: ${err?.message || err}`);
+        log('WARNING', `⚠️ Erro ao salvar histórico: ${err.message}`);
       }
       
-      log('SUCCESS', `✅ Boas-vindas enviadas para LEAD: ${pushName}`);
-      return;
+      log('SUCCESS', `✅ Boas-vindas enviadas para LEAD (ÚNICA)`);
+      return; // 🔥 CRÍTICO: Retorna aqui, não continua
     }
 
     // ============================================
-    // PASSO 5: LEAD CONHECIDO? (Continuação)
+    // PASSO 7: LEAD conhecido
     // ============================================
     if (isLead) {
-      log('INFO', `🎯 Mensagem de LEAD existente: ${pushName} (${phone})`);
+      log('INFO', `🎯 Mensagem de LEAD existente: ${pushName}`);
       
       await saveUser(jid, { name: pushName });
       
-      // 🔥 CORREÇÃO: simulateTyping otimizado (máx 1500ms)
       await simulateTyping(sock, jid, 1500);
       
       const aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
       
-      // 🔥 DIRETRIZ 6: Envio não bloqueante
       await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
       
-      // Verifica se deve enviar link da fanpage
       if (shouldSendFanpageLink(cleanedMessage)) {
         await simulateTyping(sock, jid, 1000);
         await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch(() => {});
-        log('INFO', `📱 Link da fanpage enviado para ${pushName}`);
       }
       
-      log('SUCCESS', `✅ Resposta IA enviada para LEAD: ${pushName}`);
+      log('SUCCESS', `✅ Resposta IA enviada para LEAD`);
       return;
     }
 
     // ============================================
-    // PASSO 6: CLIENTE EXISTENTE COM CONVERSA ATIVA
+    // PASSO 8: Cliente existente
     // ============================================
     const isExisting = await isExistingUser(jid);
     const hasConversation = await hasOngoingConversation(jid);
     
     if (isExisting && hasConversation) {
       const user = await getUser(jid);
-      log('INFO', `🔄 Cliente RECORRENTE: ${user.name} (${phone})`);
+      log('INFO', `🔄 Cliente RECORRENTE: ${user.name}`);
       
       if (isGreeting(cleanedMessage)) {
-        log('INFO', `👋 Saudação detectada de cliente recorrente: ${user.name}`);
-        
         await saveUser(jid, { name: pushName });
         
-        // 🔥 CORREÇÃO: simulateTyping otimizado
         await simulateTyping(sock, jid, 1500);
         
         const welcomeMsg = await generateWelcomeMessage(user.name, false);
         
-        // 🔥 DIRETRIZ 6: Envio não bloqueante
         await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
         
-        log('SUCCESS', `✅ Boas-vindas enviadas para cliente recorrente: ${user.name}`);
+        log('SUCCESS', `✅ Boas-vindas para cliente recorrente`);
         return;
       }
       
-      // Mensagem normal de cliente recorrente
       await saveUser(jid, { name: pushName });
       
-      // 🔥 CORREÇÃO: simulateTyping otimizado
       await simulateTyping(sock, jid, 1500);
       
       const aiResponse = await processClientMessage(phone, user.name, cleanedMessage);
       
-      // 🔥 DIRETRIZ 6: Envio não bloqueante
       await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
       
-      log('SUCCESS', `✅ Resposta IA enviada para cliente: ${user.name}`);
+      log('SUCCESS', `✅ Resposta IA para cliente`);
       return;
     }
 
     // ============================================
-    // PASSO 7: PRIMEIRO CONTATO ou CONVERSA ANTIGA
+    // PASSO 9: Primeiro contato
     // ============================================
-    log('INFO', `🆕 Primeiro contato ou conversa antiga: ${pushName} (${phone})`);
+    log('INFO', `🆕 Primeiro contato: ${pushName}`);
     
     await saveUser(jid, { name: pushName, isNewLead: false });
     
-    // Se for uma saudação, envia boas-vindas
     if (isGreeting(cleanedMessage)) {
-      // 🔥 CORREÇÃO: simulateTyping otimizado
       await simulateTyping(sock, jid, 1500);
       
       const welcomeMsg = await generateWelcomeMessage(pushName, false);
       
-      // 🔥 DIRETRIZ 6: Envio não bloqueante
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
-      log('SUCCESS', `✅ Boas-vindas enviadas para novo cliente: ${pushName}`);
+      log('SUCCESS', `✅ Boas-vindas para novo cliente`);
       return;
     }
     
-    // Mensagem normal de novo cliente
-    // 🔥 CORREÇÃO: simulateTyping otimizado
     await simulateTyping(sock, jid, 1500);
     
     const aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
     
-    // 🔥 DIRETRIZ 6: Envio não bloqueante
     await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
     
-    log('SUCCESS', `✅ Resposta IA enviada para novo cliente: ${pushName}`);
+    log('SUCCESS', `✅ Resposta IA para novo cliente`);
 
   } catch (error) {
-    // 🔥 DIRETRIZ 7: Logs não bloqueantes
     log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
     if (process.env.DEBUG_MODE === 'true') {
       console.error(error.stack);
@@ -481,20 +375,12 @@ export async function handleIncomingMessage(sock, message) {
   }
 }
 
-/**
- * 🔥 VERSÃO FINAL: Wrapper de processamento
- * NÃO FAZ VALIDAÇÃO DE SOCKET - confia no evento do Baileys
- */
 export async function processMessage(sock, message) {
   try {
     await handleIncomingMessage(sock, message);
   } catch (error) {
-    // 🔥 DIRETRIZ 7: Silencia erros de conexão, não interrompe fluxo
     if (!error.message?.includes('Connection') && !error.message?.includes('Stream')) {
       log('WARNING', `⚠️ Erro crítico: ${error.message}`);
-      if (process.env.DEBUG_MODE === 'true') {
-        console.error(error.stack);
-      }
     }
   }
 }

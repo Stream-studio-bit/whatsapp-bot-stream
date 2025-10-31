@@ -31,8 +31,12 @@ let isKeepAliveInitialized = false;
 let mongoClient = null;
 let isConnecting = false;
 let reconnectAttempts = 0;
-let reconnectScheduled = false;
 const MAX_RECONNECT_ATTEMPTS = 10;
+
+/**
+ * 🔥 NOVO: TIMEOUT HANDLE PARA RECONEXÃO (Diretriz: apenas UM timeout ativo)
+ */
+let reconnectTimeout = null;
 
 /**
  * 🔥 PROTEÇÃO CONTRA MENSAGENS DUPLICADAS (Diretriz 9)
@@ -222,6 +226,7 @@ async function useMongoDBAuthState(collection) {
 
 /**
  * 🔥 CRIA CONEXÃO DO WHATSAPP (pode ser chamada múltiplas vezes para reconexão)
+ * ✅ CORREÇÃO APLICADA: Elimina loop infinito seguindo diretrizes do documento
  */
 async function connectWhatsApp() {
   // 🔥 PROTEÇÃO: Previne múltiplas conexões simultâneas
@@ -251,25 +256,23 @@ async function connectWhatsApp() {
     const timestamp = new Date().toLocaleTimeString('pt-BR');
     log('INFO', `🔄 Iniciando conexão (Tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}) - ${timestamp}`);
     
-    // 🔥 CORREÇÃO: Só fecha socket anterior se ele realmente existir E estiver inativo
-    if (globalSock && globalSock.ws) {
-      const wsState = globalSock.ws.readyState;
-      
-      // Só fecha se não estiver aberto (WebSocket.OPEN === 1)
-      if (wsState !== 1) {
-        log('INFO', '🔌 Removendo socket anterior inativo...');
-        try {
-          // 🔥 CORREÇÃO (Diretriz 8): Remove listeners antes de destruir
-          globalSock.ev.removeAllListeners?.();
-        } catch (e) { /* ignore */ }
-        globalSock = null;
-      } else {
-        // Socket ainda está ativo - não reconectar
-        log('WARNING', '⚠️  Socket já está conectado - abortando reconexão');
-        isConnecting = false;
-        reconnectAttempts = 0;
-        return globalSock;
-      }
+    // 🔥 PASSO 2: Verifica se socket atual ainda está ativo (CRÍTICO)
+    if (globalSock?.ws?.readyState === 1) {
+      log('WARNING', '⚠️ Socket ainda ativo - ABORTANDO reconexão para evitar conflito');
+      isConnecting = false;
+      reconnectAttempts = 0;
+      return globalSock;
+    }
+    
+    // 🔥 PASSO 4: Limpa socket anterior COMPLETAMENTE
+    if (globalSock) {
+      log('INFO', '🔌 Destruindo socket anterior inativo...');
+      try {
+        globalSock.ev.removeAllListeners();
+        globalSock.ws?.removeAllListeners?.();
+        globalSock.ws?.terminate?.();
+      } catch (e) { /* ignore */ }
+      globalSock = null;
     }
     
     // Obtém versão mais recente do Baileys
@@ -314,7 +317,7 @@ async function connectWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
     
     // ============================================
-    // EVENTO: Atualização de conexão
+    // 🔥 EVENTO: Atualização de conexão (CORREÇÃO APLICADA)
     // ============================================
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -330,47 +333,30 @@ async function connectWhatsApp() {
       
       // Conexão fechada
       if (connection === 'close') {
-        // 🔥 CORREÇÃO: Verificação de integridade antes de reconectar
+        // 🔥 PASSO 1: Cancela reconexão pendente
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+          log('INFO', '🔥 Timeout de reconexão anterior cancelado');
+        }
+        
+        // 🔥 PASSO 2: Verifica se socket atual ainda está ativo
         if (globalSock?.ws?.readyState === 1) {
-          log('INFO', '✅ Socket global ainda está ativo - ignorando close event');
+          log('WARNING', '⚠️ Socket ainda ativo - ABORTANDO reconexão para evitar conflito');
           return;
         }
         
         isConnecting = false;
         
-        // 🔥 CORREÇÃO: Detecção robusta de logout
-        let shouldReconnect = true;
+        // 🔥 PASSO 3: Verifica se foi logout
         const statusCode = (lastDisconnect?.error instanceof Boom) 
           ? lastDisconnect.error.output?.statusCode 
           : null;
         
-        const errorMessage = String(lastDisconnect?.error?.message || '').toLowerCase();
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         
-        // Verifica se foi logout explícito
-        if (errorMessage.includes('logged out') || statusCode === DisconnectReason.loggedOut) {
-          shouldReconnect = false;
-          log('ERROR', '🚫 Sessão invalidada (logged out) - não reconectará automaticamente');
-        }
-        
-        if (shouldReconnect) {
-          // 🔥 CORREÇÃO: Usa flag única para agendar reconexão (evita enfileiramento)
-          if (!reconnectScheduled) {
-            reconnectScheduled = true;
-            
-            // Delay progressivo (3s, 5s, 10s, 15s...)
-            const delay = Math.min(3000 + (reconnectAttempts * 2000), 15000);
-            
-            log('WARNING', `⚠️  Conexão perdida. Reconectando em ${delay/1000}s...`);
-            
-            setTimeout(() => {
-              reconnectScheduled = false;
-              connectWhatsApp();
-            }, delay);
-          } else {
-            log('INFO', '🔒 Reconexão já agendada — ignorando nova tentativa');
-          }
-        } else {
-          log('ERROR', '❌ Desconectado (logout detectado). Limpando credenciais...');
+        if (!shouldReconnect) {
+          log('ERROR', '❌ Sessão invalidada (logout) - não reconectará');
           
           try {
             await clearAll();
@@ -401,14 +387,38 @@ async function connectWhatsApp() {
           } else {
             log('INFO', '⏸️  Bot pausado (logout) - aguardando ação manual ou reinicie o container');
           }
+          return;
         }
+        
+        // 🔥 PASSO 4: Limpa socket anterior COMPLETAMENTE
+        if (globalSock) {
+          try {
+            globalSock.ev.removeAllListeners();
+            globalSock.ws?.removeAllListeners?.();
+            globalSock.ws?.terminate?.();
+          } catch (e) { /* ignore */ }
+          globalSock = null;
+        }
+        
+        // 🔥 PASSO 5: Agenda reconexão com delay (APENAS UM TIMEOUT ATIVO)
+        log('INFO', `🔄 Agendando reconexão em 5 segundos...`);
+        reconnectTimeout = setTimeout(() => {
+          reconnectTimeout = null;
+          connectWhatsApp();
+        }, 5000);
       }
       
       // Conectado
       if (connection === 'open') {
+        // 🔥 Cancela qualquer reconexão pendente
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+          log('INFO', '🔥 Timeout de reconexão cancelado (conexão estabelecida)');
+        }
+        
         isConnecting = false;
         reconnectAttempts = 0;
-        reconnectScheduled = false;
         
         log('SUCCESS', '✅ Conectado ao WhatsApp com sucesso!');
         console.log('\n🎉 ┌──────────────────────────────────────────────┐');
@@ -507,20 +517,18 @@ async function connectWhatsApp() {
       console.error(error.stack);
     }
     
-    // 🔥 CORREÇÃO (Diretriz 1): Não manipula globalSock aqui
-    
-    // 🔥 CORREÇÃO: Delay progressivo após erro e usa flag de agendamento
-    if (!reconnectScheduled) {
-      reconnectScheduled = true;
-      const delay = Math.min(5000 + (reconnectAttempts * 2000), 15000);
-      
-      log('INFO', `🔄 Tentando reconectar em ${delay/1000}s...`);
-      
-      setTimeout(() => {
-        reconnectScheduled = false;
-        connectWhatsApp();
-      }, delay);
+    // 🔥 PASSO 1: Cancela reconexão pendente
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
     }
+    
+    // 🔥 PASSO 5: Agenda reconexão com delay (APENAS UM TIMEOUT)
+    log('INFO', `🔄 Tentando reconectar em 5 segundos...`);
+    reconnectTimeout = setTimeout(() => {
+      reconnectTimeout = null;
+      connectWhatsApp();
+    }, 5000);
     
     return null;
   }
@@ -612,13 +620,15 @@ process.on('uncaughtException', (err) => {
   if (err.message.includes('Connection') || err.message.includes('WebSocket')) {
     log('INFO', '🔄 Tentando reconectar após erro de conexão...');
     
-    if (!reconnectScheduled) {
-      reconnectScheduled = true;
-      setTimeout(() => {
-        reconnectScheduled = false;
-        connectWhatsApp();
-      }, 5000);
+    // 🔥 Cancela timeout pendente e agenda novo
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
     }
+    
+    reconnectTimeout = setTimeout(() => {
+      reconnectTimeout = null;
+      connectWhatsApp();
+    }, 5000);
   } else {
     // Erro crítico não relacionado a conexão
     log('ERROR', '❌ Erro crítico detectado. Encerrando...');
@@ -633,7 +643,11 @@ process.on('SIGINT', async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado pelo usuário');
   
-  // Limpa interval de cleanup
+  // Limpa timeouts e intervals
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+  }
+  
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
   }
@@ -649,7 +663,11 @@ process.on('SIGTERM', async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado');
   
-  // Limpa interval de cleanup
+  // Limpa timeouts e intervals
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+  }
+  
   if (cleanupInterval) {
     clearInterval(cleanupInterval);
   }
