@@ -32,9 +32,6 @@ import {
 
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 
-/**
- * 🔥 DEBOUNCE MAP - Previne processamento duplicado
- */
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
@@ -52,7 +49,7 @@ function cleanupDebounceMap() {
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 CORREÇÃO 3: Verifica se é owner (múltiplos formatos)
+ * 🔥 Verifica se é owner
  */
 function isOwner(jid) {
   const phone = extractPhoneNumber(jid);
@@ -67,7 +64,6 @@ function isOwner(jid) {
   
   const cleanPhone = phone.replace(/\D/g, '');
   
-  // 🔥 Aceita: 5513996723219, 13996723219, 996723219
   const isMatch = 
     cleanPhone === ownerPhone ||
     cleanPhone.endsWith(ownerPhone) ||
@@ -81,8 +77,7 @@ function isOwner(jid) {
 }
 
 /**
- * 🔥 CORREÇÃO 3: Processa comandos (PRIORIDADE MÁXIMA)
- * Detecta: /assumir, !assumir, assumir, /liberar, etc
+ * 🔥 Processa comandos /assumir e /liberar
  */
 async function handleCommand(sock, message) {
   try {
@@ -100,7 +95,6 @@ async function handleCommand(sock, message) {
     
     log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName}`);
     
-    // 🔥 Verifica permissão ANTES de processar
     if (!isOwner(jid)) {
       log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
       
@@ -113,9 +107,7 @@ async function handleCommand(sock, message) {
     
     log('SUCCESS', `✅ Comando autorizado de owner`);
     
-    // ============================================
     // COMANDO: /assumir
-    // ============================================
     if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
       try {
         await blockBotForUser(jid);
@@ -139,9 +131,7 @@ async function handleCommand(sock, message) {
       }
     }
     
-    // ============================================
     // COMANDO: /liberar
-    // ============================================
     if (cmd === 'RELEASE' || cmd === 'LIBERAR') {
       let isBlocked = false;
       try {
@@ -189,32 +179,39 @@ async function handleCommand(sock, message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL - ORDEM CORRETA
- * 1. Valida mensagem
- * 2. Ignora próprias mensagens
- * 3. Extrai texto
- * 4. 🔥 DETECTA COMANDO (PRIORIDADE MÁXIMA)
- * 5. Verifica bloqueio
- * 6. 🔥 DETECTA LEAD (ANTES de processar)
- * 7. Processa LEAD conhecido
- * 8. Processa cliente existente
- * 9. Processa primeiro contato
+ * 🔥 HANDLER PRINCIPAL
+ * MUDANÇA CRÍTICA: Bloqueio automático quando owner envia mensagem
  */
 export async function handleIncomingMessage(sock, message) {
   try {
-    // ============================================
-    // PASSO 1-3: Validações básicas
-    // ============================================
+    // Validações básicas
     if (!isValidMessage(message)) return;
     
-    if (message?.key?.fromMe) return;
+    // 🔥 BLOQUEIO AUTOMÁTICO: Se é mensagem DO OWNER
+    if (message?.key?.fromMe) {
+      const jid = message.key.remoteJid;
+      
+      // Verifica se é conversa com cliente (não grupo/status)
+      if (jid && !jid.includes('@g.us') && !jid.includes('@broadcast')) {
+        if (isOwner(jid)) {
+          const isBlocked = await isBotBlockedForUser(jid);
+          
+          if (!isBlocked) {
+            await blockBotForUser(jid);
+            log('SUCCESS', '🔒 Bot BLOQUEADO automaticamente (owner enviou mensagem)');
+          }
+        }
+      }
+      
+      return; // Sempre ignora próprias mensagens
+    }
 
     const jid = message.key.remoteJid;
     const messageText = extractMessageText(message);
 
     if (!messageText) return;
 
-    // 🔥 DEBOUNCE
+    // Debounce
     const now = Date.now();
     const lastTime = lastMessageTime.get(jid) || 0;
     
@@ -228,18 +225,14 @@ export async function handleIncomingMessage(sock, message) {
     
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}"`);
 
-    // ============================================
-    // 🔥 PASSO 4: COMANDOS TÊM PRIORIDADE MÁXIMA
-    // ============================================
+    // PASSO 1: Comandos têm prioridade
     const isCommandProcessed = await handleCommand(sock, message);
     if (isCommandProcessed) {
       log('INFO', `⚙️ Comando processado`);
       return;
     }
 
-    // ============================================
-    // 🔥 PASSO 5: Verifica bloqueio
-    // ============================================
+    // PASSO 2: Verifica bloqueio
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
@@ -249,13 +242,11 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     if (isBlocked) {
-      log('WARNING', `🚫 Bot bloqueado para ${pushName}`);
+      log('WARNING', `🚫 Bot bloqueado para ${pushName} - Atendimento manual`);
       return;
     }
 
-    // ============================================
-    // 🔥 PASSO 6: DETECTA LEAD PRIMEIRO (ANTES de processar)
-    // ============================================
+    // PASSO 3: Detecta LEAD primeiro
     const isLead = await isLeadUser(jid);
     
     if (!isLead && isNewLead(cleanedMessage)) {
@@ -269,7 +260,6 @@ export async function handleIncomingMessage(sock, message) {
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
-      // 🔥 Salva no histórico para evitar duplicação
       try {
         await saveConversationHistory(jid, [
           { role: 'user', content: cleanedMessage },
@@ -280,12 +270,10 @@ export async function handleIncomingMessage(sock, message) {
       }
       
       log('SUCCESS', `✅ Boas-vindas enviadas para LEAD (ÚNICA)`);
-      return; // 🔥 CRÍTICO: Retorna aqui, não continua
+      return;
     }
 
-    // ============================================
-    // PASSO 7: LEAD conhecido
-    // ============================================
+    // LEAD conhecido
     if (isLead) {
       log('INFO', `🎯 Mensagem de LEAD existente: ${pushName}`);
       
@@ -306,9 +294,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // ============================================
-    // PASSO 8: Cliente existente
-    // ============================================
+    // Cliente existente
     const isExisting = await isExistingUser(jid);
     const hasConversation = await hasOngoingConversation(jid);
     
@@ -341,9 +327,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // ============================================
-    // PASSO 9: Primeiro contato
-    // ============================================
+    // Primeiro contato
     log('INFO', `🆕 Primeiro contato: ${pushName}`);
     
     await saveUser(jid, { name: pushName, isNewLead: false });
