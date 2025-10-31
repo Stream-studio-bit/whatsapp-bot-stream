@@ -35,8 +35,8 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
-// 🔥 NOVO: Controle de mensagens de boas-vindas enviadas
-const welcomeSent = new Map();
+// 🔥 CRITICAL: Importa welcomeSent GLOBAL do index.js (não reseta em reconexões)
+import { welcomeSent } from '../index.js';
 
 function cleanupDebounceMap() {
   const now = Date.now();

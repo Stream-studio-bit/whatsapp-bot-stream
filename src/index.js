@@ -3,9 +3,11 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   BufferJSON,
   initAuthCreds,
-  proto
+  proto,
+  makeCacheableSignalKeyStore
 } from '@whiskeysockets/baileys';
 import { MongoClient } from 'mongodb';
+import NodeCache from 'node-cache';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { Boom } from '@hapi/boom';
@@ -32,7 +34,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = 5000;
 
 // ============================================
-// ESTADO GLOBAL
+// 🔥 ESTADO GLOBAL PERSISTENTE
 // ============================================
 let mongoClient = null;
 let globalSock = null;
@@ -40,9 +42,15 @@ let reconnectAttempts = 0;
 let isConnecting = false;
 let isInitialized = false;
 
+// 🔥 CRITICAL: msgRetryCounterCache FORA do socket (previne loop)
+const msgRetryCounterCache = new NodeCache();
+
 // Cache de mensagens processadas (anti-duplicação)
 const processedMessages = new Set();
 const MESSAGE_CACHE_LIMIT = 1000;
+
+// 🔥 CRITICAL: welcomeSent GLOBAL (não reseta em reconexões)
+const welcomeSent = new Map();
 
 // Cleanup interval
 let cleanupInterval = null;
@@ -172,7 +180,9 @@ async function getMessageFromDB(key) {
     
     return proto.Message.fromObject({});
   } catch (error) {
-    log('WARNING', `⚠️ Erro ao buscar mensagem: ${error.message}`);
+    if (process.env.DEBUG_MODE === 'true') {
+      log('WARNING', `⚠️ Erro ao buscar mensagem: ${error.message}`);
+    }
     return proto.Message.fromObject({});
   }
 }
@@ -219,6 +229,14 @@ function startPeriodicTasks() {
         }
         log('INFO', `🧹 Cache limpo: ${excess} mensagens`);
       }
+      
+      // 🔥 Limpa welcomeSent após 1 hora
+      const now = Date.now();
+      for (const [jid, timestamp] of welcomeSent.entries()) {
+        if (now - timestamp > 3600000) {
+          welcomeSent.delete(jid);
+        }
+      }
     } catch (error) {
       log('WARNING', `⚠️ Erro no cleanup: ${error.message}`);
     }
@@ -226,6 +244,11 @@ function startPeriodicTasks() {
   
   log('SUCCESS', '✅ Tarefas periódicas iniciadas');
 }
+
+// ============================================
+// 🔥 EXPORTA welcomeSent PARA messageHandler
+// ============================================
+export { welcomeSent };
 
 // ============================================
 // 🔥 CONEXÃO WHATSAPP - SEM LOOP INFINITO
@@ -285,15 +308,21 @@ async function connectWhatsApp() {
     const collection = db.collection(SESSION_ID);
     const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
 
-    // 🔥 Cria socket
+    // 🔥 Cria socket COM makeCacheableSignalKeyStore
     const sock = makeWASocket({
       version,
       logger: pino({ level: 'silent' }),
       printQRInTerminal: false,
-      auth: state,
+      auth: {
+        creds: state.creds,
+        // 🔥 CRITICAL: makeCacheableSignalKeyStore previne descriptografia lenta
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
+      },
       browser: ['Stream Studio Bot', 'Chrome', '1.0.0'],
       markOnlineOnConnect: true,
-      getMessage: getMessageFromDB, // 🔥 CRITICAL FIX
+      getMessage: getMessageFromDB,
+      // 🔥 CRITICAL: msgRetryCounterCache previne loop de descriptografia
+      msgRetryCounterCache,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 30000,
@@ -393,7 +422,6 @@ async function connectWhatsApp() {
 
       for (const message of messages) {
         try {
-          // 🔥 CORREÇÃO: NÃO ignora fromMe aqui - deixa messageHandler decidir
           if (!message.message) continue;
 
           const messageId = message.key.id;
@@ -411,7 +439,7 @@ async function connectWhatsApp() {
           // 🔥 Salva mensagem no MongoDB
           await saveMessageToDB(message);
 
-          // 🔥 Processa TODAS as mensagens (incluindo fromMe para bloqueio automático)
+          // 🔥 Processa TODAS as mensagens (incluindo fromMe)
           await processMessage(sock, message);
 
         } catch (error) {
@@ -492,8 +520,8 @@ function setupConsoleCommands() {
 // TRATAMENTO DE ERROS
 // ============================================
 process.on('unhandledRejection', (err) => {
-  log('WARNING', `⚠️ Unhandled Rejection: ${err?.message || err}`);
   if (process.env.DEBUG_MODE === 'true') {
+    log('WARNING', `⚠️ Unhandled Rejection: ${err?.message || err}`);
     console.error(err?.stack || err);
   }
 });
