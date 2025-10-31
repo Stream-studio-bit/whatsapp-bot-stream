@@ -69,13 +69,13 @@ const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
  */
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════╝');
+  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝');
   console.log('');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot Name: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
@@ -333,11 +333,11 @@ async function connectWhatsApp() {
       
       // Conexão fechada
       if (connection === 'close') {
-        // 🔥 PASSO 1: Cancela reconexão pendente
+        // 🔥 CORREÇÃO 1: Cancela timeout anterior ANTES de agendar novo
         if (reconnectTimeout) {
           clearTimeout(reconnectTimeout);
           reconnectTimeout = null;
-          log('INFO', '🔥 Timeout de reconexão anterior cancelado');
+          log('INFO', '🔥 Timeout anterior cancelado');
         }
         
         // 🔥 PASSO 2: Verifica se socket atual ainda está ativo
@@ -447,7 +447,7 @@ async function connectWhatsApp() {
     
     // ============================================
     // EVENTO: Novas mensagens
-    // 🔥 CORREÇÃO DEFINITIVA: Usa padrão recomendado do Baileys
+    // 🔥 CORREÇÃO 2: Filtrar mensagens próprias PRIMEIRO
     // ============================================
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
@@ -458,8 +458,11 @@ async function connectWhatsApp() {
       // 🔥 CORREÇÃO: Processa todas as mensagens do array
       for (const message of messages) {
         try {
-          // 🔥 CORREÇÃO (Diretriz 2): Ignora mensagens próprias
+          // 🔥 CORREÇÃO: Ignora mensagens próprias PRIMEIRO
           if (message.key.fromMe) continue;
+          
+          // 🔥 CORREÇÃO: Ignora mensagens sem conteúdo
+          if (!message.message) continue;
           
           // 🔥 CORREÇÃO (Diretriz 9): Proteção contra duplicatas
           const messageId = message.key.id;
@@ -470,14 +473,6 @@ async function connectWhatsApp() {
             continue;
           }
           processedMessages.add(messageId);
-          
-          // 🔥 CORREÇÃO: Ignora mensagens sem conteúdo (stub/system)
-          if (!message.message) {
-            if (process.env.DEBUG_MODE === 'true') {
-              log('INFO', '⏭️  Mensagem sem conteúdo ignorada (stub/system message)');
-            }
-            continue;
-          }
           
           // 🔥 CORREÇÃO (Diretriz 1): Usa sock do escopo, nunca manipula conexão aqui
           await processMessage(sock, message);
@@ -517,14 +512,15 @@ async function connectWhatsApp() {
       console.error(error.stack);
     }
     
-    // 🔥 PASSO 1: Cancela reconexão pendente
+    // 🔥 CORREÇÃO 1: Cancela timeout anterior ANTES de agendar novo
     if (reconnectTimeout) {
       clearTimeout(reconnectTimeout);
       reconnectTimeout = null;
+      log('INFO', '🔥 Timeout anterior cancelado');
     }
     
     // 🔥 PASSO 5: Agenda reconexão com delay (APENAS UM TIMEOUT)
-    log('INFO', `🔄 Tentando reconectar em 5 segundos...`);
+    log('INFO', `🔄 Agendando reconexão em 5 segundos...`);
     reconnectTimeout = setTimeout(() => {
       reconnectTimeout = null;
       connectWhatsApp();

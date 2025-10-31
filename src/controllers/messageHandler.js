@@ -95,6 +95,9 @@ async function handleCommand(sock, message) {
     
     log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName}`);
     
+    // 🔥 BLOQUEIO AUTOMÁTICO: Quando owner usa comando /assumir
+    // (já implementado corretamente nas linhas 50-70)
+    
     if (!isOwner(jid)) {
       log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
       
@@ -180,30 +183,15 @@ async function handleCommand(sock, message) {
 
 /**
  * 🔥 HANDLER PRINCIPAL
- * MUDANÇA CRÍTICA: Bloqueio automático quando owner envia mensagem
  */
 export async function handleIncomingMessage(sock, message) {
   try {
     // Validações básicas
     if (!isValidMessage(message)) return;
     
-    // 🔥 BLOQUEIO AUTOMÁTICO: Se é mensagem DO OWNER
+    // 🔥 CORREÇÃO: Ignora próprias mensagens - removido bloco de bloqueio automático incorreto
     if (message?.key?.fromMe) {
-      const jid = message.key.remoteJid;
-      
-      // Verifica se é conversa com cliente (não grupo/status)
-      if (jid && !jid.includes('@g.us') && !jid.includes('@broadcast')) {
-        if (isOwner(jid)) {
-          const isBlocked = await isBotBlockedForUser(jid);
-          
-          if (!isBlocked) {
-            await blockBotForUser(jid);
-            log('SUCCESS', '🔒 Bot BLOQUEADO automaticamente (owner enviou mensagem)');
-          }
-        }
-      }
-      
-      return; // Sempre ignora próprias mensagens
+      return;
     }
 
     const jid = message.key.remoteJid;
