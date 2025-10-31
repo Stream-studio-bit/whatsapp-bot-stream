@@ -13,6 +13,14 @@ const userCache = new NodeCache({
 });
 
 /**
+ * 🔥 CACHE DE BLOQUEIO - FONTE ÚNICA DE VERDADE
+ * 🔥 DIRETRIZ 3: Isolamento total de bloqueio
+ */
+const manualAttendanceCache = new NodeCache({ 
+  stdTTL: 0 
+});
+
+/**
  * 🔥 NORMALIZA DATA
  */
 function normalizeDate(date) {
@@ -49,6 +57,12 @@ export async function saveUser(jid, data = {}) {
   const phone = extractPhoneNumber(jid);
   const existing = userCache.get(phone);
   
+  // 🔥 Sincroniza blockedAt do manualAttendanceCache
+  const manualAttendance = manualAttendanceCache.get(phone);
+  const blockedAt = manualAttendance?.blockedAt 
+    ? normalizeDate(manualAttendance.blockedAt)
+    : null;
+  
   const userData = {
     phone: phone,
     name: data.name || existing?.name || 'Cliente',
@@ -56,7 +70,7 @@ export async function saveUser(jid, data = {}) {
     lastInteraction: new Date(),
     isNewLead: data.isNewLead !== undefined ? data.isNewLead : existing?.isNewLead || false,
     messageCount: (existing?.messageCount || 0) + 1,
-    blockedAt: data.blockedAt !== undefined ? data.blockedAt : existing?.blockedAt || null
+    blockedAt: blockedAt
   };
   
   userCache.set(phone, userData);
@@ -80,10 +94,16 @@ export async function updateUser(jid, data = {}) {
     return null;
   }
   
+  const manualAttendance = manualAttendanceCache.get(phone);
+  const blockedAt = manualAttendance?.blockedAt 
+    ? normalizeDate(manualAttendance.blockedAt)
+    : null;
+  
   const userData = {
     ...existing,
     ...data,
-    messageCount: data.messageCount !== undefined ? data.messageCount : existing.messageCount
+    messageCount: data.messageCount !== undefined ? data.messageCount : existing.messageCount,
+    blockedAt: blockedAt
   };
   
   userCache.set(phone, userData);
@@ -105,8 +125,16 @@ export async function getUser(jid) {
   
   if (!user) return null;
   
+  // 🔥 Sincroniza blockedAt do manualAttendanceCache
+  const manualAttendance = manualAttendanceCache.get(phone);
+  const blockedAt = manualAttendance?.blockedAt 
+    ? normalizeDate(manualAttendance.blockedAt)
+    : null;
+  
+  user.blockedAt = blockedAt;
+  
   // 🔥 Verifica expiração automática
-  if (user.blockedAt && isBlockExpired(user.blockedAt)) {
+  if (blockedAt && isBlockExpired(blockedAt)) {
     log('INFO', `⏰ Bloqueio expirado automaticamente para ${phone}`);
     await unblockBotForUser(jid);
     user.blockedAt = null;
@@ -174,10 +202,16 @@ export async function blockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
   const blockedAt = new Date();
   
+  // 🔥 manualAttendanceCache é a FONTE ÚNICA
+  manualAttendanceCache.set(phone, {
+    blockedAt: blockedAt,
+    blockedBy: process.env.OWNER_NAME || 'Roberto'
+  });
+  
+  // Sincroniza userCache
   const user = userCache.get(phone);
   if (user) {
     user.blockedAt = blockedAt;
-    user.blockedBy = process.env.OWNER_NAME || 'Roberto';
     userCache.set(phone, user);
   }
   
@@ -191,10 +225,13 @@ export async function blockBotForUser(jid) {
 export async function unblockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
   
+  // 🔥 Remove do manualAttendanceCache
+  manualAttendanceCache.del(phone);
+  
+  // Sincroniza userCache
   const user = userCache.get(phone);
   if (user) {
     user.blockedAt = null;
-    user.blockedBy = null;
     userCache.set(phone, user);
   }
   
@@ -208,14 +245,15 @@ export async function unblockBotForUser(jid) {
 export async function isBotBlockedForUser(jid) {
   const phone = extractPhoneNumber(jid);
   
-  const user = userCache.get(phone);
+  // 🔥 Verifica no manualAttendanceCache (fonte única)
+  const manualAttendance = manualAttendanceCache.get(phone);
   
-  if (!user || !user.blockedAt) {
+  if (!manualAttendance) {
     return false;
   }
   
   // 🔥 Verifica expiração
-  if (isBlockExpired(user.blockedAt)) {
+  if (isBlockExpired(manualAttendance.blockedAt)) {
     log('INFO', `⏰ Bloqueio expirado e removido para: ${phone}`);
     await unblockBotForUser(jid);
     return false;
@@ -228,8 +266,11 @@ export async function isBotBlockedForUser(jid) {
  * Lista bloqueados
  */
 export function getBlockedUsers() {
-  const allUsers = getAllUsers();
-  return allUsers.filter(user => user.blockedAt && !isBlockExpired(user.blockedAt));
+  const keys = manualAttendanceCache.keys();
+  return keys.map(key => ({
+    phone: key,
+    ...manualAttendanceCache.get(key)
+  }));
 }
 
 /**
@@ -237,17 +278,23 @@ export function getBlockedUsers() {
  * Chamado a cada 5 minutos pelo index.js
  */
 export async function cleanExpiredBlocks() {
-  const allUsers = getAllUsers();
+  const keys = manualAttendanceCache.keys();
   let cleaned = 0;
   
-  for (const user of allUsers) {
-    if (user.blockedAt && isBlockExpired(user.blockedAt)) {
-      user.blockedAt = null;
-      user.blockedBy = null;
-      userCache.set(user.phone, user);
+  for (const phone of keys) {
+    const attendance = manualAttendanceCache.get(phone);
+    
+    if (attendance && isBlockExpired(attendance.blockedAt)) {
+      manualAttendanceCache.del(phone);
+      
+      const user = userCache.get(phone);
+      if (user) {
+        user.blockedAt = null;
+        userCache.set(phone, user);
+      }
       
       cleaned++;
-      log('INFO', `🧹 Bloqueio expirado removido: ${user.phone}`);
+      log('INFO', `🧹 Bloqueio expirado removido: ${phone}`);
     }
   }
   
@@ -279,9 +326,13 @@ export function getStats() {
     } else {
       returningClients++;
     }
-    
-    // 🔥 Conta apenas bloqueios NÃO expirados
-    if (user.blockedAt && !isBlockExpired(user.blockedAt)) {
+  });
+  
+  // 🔥 Conta apenas bloqueios NÃO expirados
+  const blockedKeys = manualAttendanceCache.keys();
+  blockedKeys.forEach(phone => {
+    const attendance = manualAttendanceCache.get(phone);
+    if (attendance && !isBlockExpired(attendance.blockedAt)) {
       usersInManualAttendance++;
     }
   });
@@ -296,17 +347,28 @@ export function getStats() {
 
 export function getAllUsers() {
   const keys = userCache.keys();
-  return keys.map(key => userCache.get(key));
+  return keys.map(key => {
+    const user = userCache.get(key);
+    
+    const manualAttendance = manualAttendanceCache.get(key);
+    if (manualAttendance?.blockedAt) {
+      user.blockedAt = normalizeDate(manualAttendance.blockedAt);
+    }
+    
+    return user;
+  });
 }
 
 export function clearUser(jid) {
   const phone = extractPhoneNumber(jid);
   userCache.del(phone);
+  manualAttendanceCache.del(phone);
   log('INFO', `🗑️ Cache limpo para: ${phone}`);
 }
 
 export function clearAllCache() {
   userCache.flushAll();
+  manualAttendanceCache.flushAll();
   log('WARNING', '🗑️ Todo o cache limpo!');
 }
 
