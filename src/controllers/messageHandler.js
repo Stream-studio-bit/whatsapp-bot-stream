@@ -35,6 +35,9 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
+// 🔥 NOVO: Controle de mensagens de boas-vindas enviadas
+const welcomeSent = new Map();
+
 function cleanupDebounceMap() {
   const now = Date.now();
   const MAX_AGE = 60000;
@@ -42,6 +45,13 @@ function cleanupDebounceMap() {
   for (const [jid, timestamp] of lastMessageTime.entries()) {
     if (now - timestamp > MAX_AGE) {
       lastMessageTime.delete(jid);
+    }
+  }
+  
+  // Limpa controle de boas-vindas após 1 hora
+  for (const [jid, timestamp] of welcomeSent.entries()) {
+    if (now - timestamp > 3600000) {
+      welcomeSent.delete(jid);
     }
   }
 }
@@ -94,9 +104,6 @@ async function handleCommand(sock, message) {
     const pushName = message.pushName || 'Usuário';
     
     log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName}`);
-    
-    // 🔥 BLOQUEIO AUTOMÁTICO: Quando owner usa comando /assumir
-    // (já implementado corretamente nas linhas 50-70)
     
     if (!isOwner(jid)) {
       log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
@@ -182,22 +189,35 @@ async function handleCommand(sock, message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL
+ * 🔥 HANDLER PRINCIPAL - CORRIGIDO
  */
 export async function handleIncomingMessage(sock, message) {
   try {
     // Validações básicas
     if (!isValidMessage(message)) return;
     
-    // 🔥 CORREÇÃO: Ignora próprias mensagens - removido bloco de bloqueio automático incorreto
-    if (message?.key?.fromMe) {
-      return;
-    }
-
     const jid = message.key.remoteJid;
     const messageText = extractMessageText(message);
-
+    
     if (!messageText) return;
+
+    // 🔥 CORREÇÃO CRÍTICA: BLOQUEIO AUTOMÁTICO QUANDO OWNER ENVIA MENSAGEM
+    // Detecta se a mensagem é DO OWNER (fromMe = true)
+    if (message?.key?.fromMe) {
+      // Verifica se é realmente o owner
+      if (isOwner(jid)) {
+        // Bloqueia automaticamente
+        try {
+          await blockBotForUser(jid);
+          log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner enviou mensagem)`);
+        } catch (err) {
+          log('WARNING', `⚠️ Erro ao bloquear automaticamente: ${err.message}`);
+        }
+      }
+      
+      // Ignora processamento (não responde mensagens próprias)
+      return;
+    }
 
     // Debounce
     const now = Date.now();
@@ -242,22 +262,36 @@ export async function handleIncomingMessage(sock, message) {
       
       await markAsNewLead(jid, pushName);
       
-      await simulateTyping(sock, jid, 1500);
-      
-      const welcomeMsg = await generateWelcomeMessage(pushName, true);
-      
-      await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
-      
-      try {
-        await saveConversationHistory(jid, [
-          { role: 'user', content: cleanedMessage },
-          { role: 'assistant', content: welcomeMsg }
-        ]);
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao salvar histórico: ${err.message}`);
+      // 🔥 CORREÇÃO: Envia boas-vindas APENAS se não enviou antes
+      if (!welcomeSent.has(jid)) {
+        await simulateTyping(sock, jid, 1500);
+        
+        const welcomeMsg = await generateWelcomeMessage(pushName, true);
+        
+        await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
+        
+        // Marca como enviado
+        welcomeSent.set(jid, now);
+        
+        try {
+          await saveConversationHistory(jid, [
+            { role: 'user', content: cleanedMessage },
+            { role: 'assistant', content: welcomeMsg }
+          ]);
+        } catch (err) {
+          log('WARNING', `⚠️ Erro ao salvar histórico: ${err.message}`);
+        }
+        
+        log('SUCCESS', `✅ Boas-vindas enviadas para LEAD (ÚNICA VEZ)`);
+      } else {
+        log('INFO', `⏭️ Boas-vindas já enviadas anteriormente para ${pushName}`);
+        
+        // Responde normalmente sem boas-vindas
+        await simulateTyping(sock, jid, 1500);
+        const aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
+        await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
       }
       
-      log('SUCCESS', `✅ Boas-vindas enviadas para LEAD (ÚNICA)`);
       return;
     }
 
@@ -290,17 +324,25 @@ export async function handleIncomingMessage(sock, message) {
       const user = await getUser(jid);
       log('INFO', `🔄 Cliente RECORRENTE: ${user.name}`);
       
+      // 🔥 CORREÇÃO: Só envia boas-vindas se for greeting E não enviou antes
       if (isGreeting(cleanedMessage)) {
-        await saveUser(jid, { name: pushName });
-        
-        await simulateTyping(sock, jid, 1500);
-        
-        const welcomeMsg = await generateWelcomeMessage(user.name, false);
-        
-        await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
-        
-        log('SUCCESS', `✅ Boas-vindas para cliente recorrente`);
-        return;
+        if (!welcomeSent.has(jid)) {
+          await saveUser(jid, { name: pushName });
+          
+          await simulateTyping(sock, jid, 1500);
+          
+          const welcomeMsg = await generateWelcomeMessage(user.name, false);
+          
+          await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
+          
+          // Marca como enviado
+          welcomeSent.set(jid, now);
+          
+          log('SUCCESS', `✅ Boas-vindas para cliente recorrente (ÚNICA VEZ)`);
+          return;
+        } else {
+          log('INFO', `⏭️ Boas-vindas já enviadas para ${user.name}`);
+        }
       }
       
       await saveUser(jid, { name: pushName });
@@ -320,15 +362,23 @@ export async function handleIncomingMessage(sock, message) {
     
     await saveUser(jid, { name: pushName, isNewLead: false });
     
+    // 🔥 CORREÇÃO: Só envia boas-vindas se for greeting E não enviou antes
     if (isGreeting(cleanedMessage)) {
-      await simulateTyping(sock, jid, 1500);
-      
-      const welcomeMsg = await generateWelcomeMessage(pushName, false);
-      
-      await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
-      
-      log('SUCCESS', `✅ Boas-vindas para novo cliente`);
-      return;
+      if (!welcomeSent.has(jid)) {
+        await simulateTyping(sock, jid, 1500);
+        
+        const welcomeMsg = await generateWelcomeMessage(pushName, false);
+        
+        await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
+        
+        // Marca como enviado
+        welcomeSent.set(jid, now);
+        
+        log('SUCCESS', `✅ Boas-vindas para novo cliente (ÚNICA VEZ)`);
+        return;
+      } else {
+        log('INFO', `⏭️ Boas-vindas já enviadas para ${pushName}`);
+      }
     }
     
     await simulateTyping(sock, jid, 1500);
