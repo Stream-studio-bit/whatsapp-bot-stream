@@ -35,8 +35,9 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
-// 🔥 CRITICAL: Importa welcomeSent GLOBAL do index.js (não reseta em reconexões)
-import { welcomeSent } from '../index.js';
+// 🔥 CRITICAL: welcomeSent GLOBAL (compartilhado entre reconexões)
+// NÃO importa do index.js (causa erro de importação circular)
+const welcomeSent = new Map();
 
 function cleanupDebounceMap() {
   const now = Date.now();
@@ -48,12 +49,7 @@ function cleanupDebounceMap() {
     }
   }
   
-  // Limpa controle de boas-vindas após 1 hora
-  for (const [jid, timestamp] of welcomeSent.entries()) {
-    if (now - timestamp > 3600000) {
-      welcomeSent.delete(jid);
-    }
-  }
+  // 🔥 REMOVIDO: Limpeza do welcomeSent está no index.js (cleanup periódico)
 }
 
 setInterval(cleanupDebounceMap, 120000);
