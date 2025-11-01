@@ -338,7 +338,7 @@ async function connectWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 
     // ============================================
-    // 🔥 EVENTO: CONEXÃO - SEM LOOP
+    // 🔥 EVENTO: CONEXÃO - TRATAMENTO CORRETO
     // ============================================
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -356,9 +356,19 @@ async function connectWhatsApp() {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        // 🔥 CRITICAL: Trata TODOS os DisconnectReason corretamente
+        const shouldLogout = statusCode === DisconnectReason.loggedOut;
+        const shouldRestart = statusCode === DisconnectReason.restartRequired;
+        const isBadSession = statusCode === DisconnectReason.badSession;
+        const isTimedOut = statusCode === DisconnectReason.timedOut;
 
-        if (!shouldReconnect) {
+        // LOG do motivo da desconexão
+        if (process.env.DEBUG_MODE === 'true') {
+          log('INFO', `🔍 Desconexão: statusCode=${statusCode}, shouldLogout=${shouldLogout}, shouldRestart=${shouldRestart}`);
+        }
+
+        // CASO 1: Logout - NÃO reconecta
+        if (shouldLogout) {
           log('ERROR', '❌ Logout detectado - limpando credenciais');
           try {
             await clearAll();
@@ -377,8 +387,49 @@ async function connectWhatsApp() {
           return;
         }
 
-        // Reconexão com delay
-        log('WARNING', '⚠️ Conexão fechada - reconectando...');
+        // CASO 2: restartRequired - Reconecta imediatamente
+        if (shouldRestart) {
+          log('WARNING', '⚠️ Restart necessário (após QR scan) - reconectando...');
+          isConnecting = false;
+          reconnectAttempts = 0; // Reset tentativas
+          
+          setTimeout(() => {
+            connectWhatsApp();
+          }, 1000); // 1 segundo apenas
+          return;
+        }
+
+        // CASO 3: badSession - Limpa credenciais e reconecta
+        if (isBadSession) {
+          log('WARNING', '⚠️ Sessão inválida - limpando e reconectando...');
+          try {
+            await clearAll();
+          } catch (e) {
+            log('ERROR', `❌ Erro ao limpar sessão: ${e.message}`);
+          }
+          
+          isConnecting = false;
+          reconnectAttempts = 0;
+          
+          setTimeout(() => {
+            connectWhatsApp();
+          }, 2000);
+          return;
+        }
+
+        // CASO 4: timedOut - Pode ser temporário, aguarda mais tempo
+        if (isTimedOut) {
+          log('WARNING', '⚠️ Timeout de conexão - aguardando...');
+          isConnecting = false;
+          
+          setTimeout(() => {
+            connectWhatsApp();
+          }, 10000); // 10 segundos
+          return;
+        }
+
+        // CASO 5: Outras desconexões - Reconexão com delay padrão
+        log('WARNING', `⚠️ Conexão fechada (código ${statusCode || 'desconhecido'}) - reconectando...`);
         isConnecting = false;
         
         setTimeout(() => {
