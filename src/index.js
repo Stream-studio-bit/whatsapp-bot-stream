@@ -361,10 +361,11 @@ async function connectWhatsApp() {
         const shouldRestart = statusCode === DisconnectReason.restartRequired;
         const isBadSession = statusCode === DisconnectReason.badSession;
         const isTimedOut = statusCode === DisconnectReason.timedOut;
+        const isLoginTimeout = statusCode === 440; // 🔥 Erro 440 = Login Timeout
 
         // LOG do motivo da desconexão
         if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', `🔍 Desconexão: statusCode=${statusCode}, shouldLogout=${shouldLogout}, shouldRestart=${shouldRestart}`);
+          log('INFO', `🔍 Desconexão: statusCode=${statusCode}`);
         }
 
         // CASO 1: Logout - NÃO reconecta
@@ -387,19 +388,27 @@ async function connectWhatsApp() {
           return;
         }
 
-        // CASO 2: restartRequired - Reconecta imediatamente
-        if (shouldRestart) {
-          log('WARNING', '⚠️ Restart necessário (após QR scan) - reconectando...');
+        // 🔥 CASO 2: Erro 440 (Login Timeout) - NÃO RECONECTA
+        // Issue #502: Desconexão temporária do WhatsApp, se resolve sozinha
+        if (isLoginTimeout) {
+          log('WARNING', '⚠️ Login Timeout (440) detectado - ignorando (desconexão temporária)');
           isConnecting = false;
-          reconnectAttempts = 0; // Reset tentativas
+          return; // NÃO reconecta
+        }
+
+        // CASO 3: restartRequired - Reconecta imediatamente
+        if (shouldRestart) {
+          log('WARNING', '⚠️ Restart necessário - reconectando...');
+          isConnecting = false;
+          reconnectAttempts = 0;
           
           setTimeout(() => {
             connectWhatsApp();
-          }, 1000); // 1 segundo apenas
+          }, 1000);
           return;
         }
 
-        // CASO 3: badSession - Limpa credenciais e reconecta
+        // CASO 4: badSession - Limpa credenciais e reconecta
         if (isBadSession) {
           log('WARNING', '⚠️ Sessão inválida - limpando e reconectando...');
           try {
@@ -417,18 +426,18 @@ async function connectWhatsApp() {
           return;
         }
 
-        // CASO 4: timedOut - Pode ser temporário, aguarda mais tempo
+        // CASO 5: timedOut - Aguarda mais tempo
         if (isTimedOut) {
-          log('WARNING', '⚠️ Timeout de conexão - aguardando...');
+          log('WARNING', '⚠️ Timeout - aguardando...');
           isConnecting = false;
           
           setTimeout(() => {
             connectWhatsApp();
-          }, 10000); // 10 segundos
+          }, 10000);
           return;
         }
 
-        // CASO 5: Outras desconexões - Reconexão com delay padrão
+        // CASO 6: Outras desconexões - Reconexão com delay padrão
         log('WARNING', `⚠️ Conexão fechada (código ${statusCode || 'desconhecido'}) - reconectando...`);
         isConnecting = false;
         
