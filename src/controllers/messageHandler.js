@@ -35,9 +35,6 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
-// 🔥 RASTREIA MENSAGENS ENVIADAS PELO BOT
-const botSentMessages = new Set();
-
 function cleanupDebounceMap() {
   const now = Date.now();
   const MAX_AGE = 60000;
@@ -47,22 +44,14 @@ function cleanupDebounceMap() {
       lastMessageTime.delete(jid);
     }
   }
-  
-  // Limpa mensagens antigas (> 5 min)
-  const oldMessages = Array.from(botSentMessages).filter(id => {
-    const timestamp = parseInt(id.split('-')[1] || '0');
-    return now - timestamp > 300000;
-  });
-  oldMessages.forEach(id => botSentMessages.delete(id));
 }
 
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 Verifica se é owner
+ * 🔥 Verifica se número é o owner
  */
-function isOwner(jid) {
-  const phone = extractPhoneNumber(jid);
+function isOwnerPhone(phone) {
   if (!phone) return false;
   
   const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, '');
@@ -74,66 +63,9 @@ function isOwner(jid) {
   
   const cleanPhone = phone.replace(/\D/g, '');
   
-  const isMatch = 
-    cleanPhone === ownerPhone ||
-    cleanPhone.endsWith(ownerPhone) ||
-    ownerPhone.endsWith(cleanPhone);
-  
-  if (process.env.DEBUG_MODE === 'true') {
-    log('INFO', `🔍 Owner check: ${cleanPhone} vs ${ownerPhone} = ${isMatch}`);
-  }
-  
-  return isMatch;
-}
-
-/**
- * 🔥 SOLUÇÃO DEFINITIVA: Rastreia mensagens enviadas pelo bot
- * Se fromMe=true mas NÃO está no Set, é mensagem MANUAL do owner
- */
-function isOwnerManualMessage(message) {
-  if (!message?.key?.fromMe) return false;
-  
-  const jid = message.key.remoteJid;
-  if (!isOwner(jid)) return false;
-  
-  const text = extractMessageText(message);
-  if (!text) return false;
-  
-  const messageId = message.key.id;
-  
-  // Se o bot enviou, estará no Set
-  const isBotMessage = botSentMessages.has(messageId);
-  
-  // Remove do Set após verificação (evita memory leak)
-  if (isBotMessage) {
-    botSentMessages.delete(messageId);
-  }
-  
-  const isManual = !isBotMessage;
-  
-  if (isManual) {
-    log('INFO', `🕵️ Mensagem MANUAL detectada (ID: ${messageId})`);
-  }
-  
-  return isManual;
-}
-
-/**
- * 🔥 Wrapper para sendMessage que registra IDs
- */
-async function sendBotMessage(sock, jid, content) {
-  const sent = await sock.sendMessage(jid, content);
-  
-  // Registra ID da mensagem enviada pelo bot
-  if (sent?.key?.id) {
-    botSentMessages.add(sent.key.id);
-    
-    if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `📤 Bot enviou mensagem ID: ${sent.key.id}`);
-    }
-  }
-  
-  return sent;
+  return cleanPhone === ownerPhone || 
+         cleanPhone.endsWith(ownerPhone) || 
+         ownerPhone.endsWith(cleanPhone);
 }
 
 /**
@@ -151,19 +83,19 @@ async function handleCommand(sock, message) {
     if (!isCommand) return false;
     
     const cmd = command?.toUpperCase() || '';
-    const pushName = message.pushName || 'Usuário';
+    const phone = extractPhoneNumber(jid);
     
-    log('INFO', `⚙️ Comando detectado: ${cmd} de ${pushName}`);
+    log('INFO', `⚙️ Comando detectado: ${cmd}`);
     
-    if (!isOwner(jid)) {
+    if (!isOwnerPhone(phone)) {
       log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
-      await sendBotMessage(sock, jid, { 
+      await sock.sendMessage(jid, { 
         text: '❌ Apenas o administrador pode usar comandos.' 
       }).catch(() => {});
       return true;
     }
     
-    log('SUCCESS', `✅ Comando autorizado de owner`);
+    log('SUCCESS', `✅ Comando autorizado`);
     
     // COMANDO: /assumir
     if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
@@ -171,14 +103,14 @@ async function handleCommand(sock, message) {
         await blockBotForUser(jid);
         log('SUCCESS', `🔒 Bot BLOQUEADO via comando`);
         
-        await sendBotMessage(sock, jid, { 
+        await sock.sendMessage(jid, { 
           text: `✅ *Atendimento assumido!*\n\n🚫 Bot pausado.\n⏰ Expira em 1 hora.` 
         }).catch(() => {});
         
         return true;
       } catch (err) {
         log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
-        await sendBotMessage(sock, jid, { 
+        await sock.sendMessage(jid, { 
           text: '❌ Erro ao bloquear bot.' 
         }).catch(() => {});
         return true;
@@ -195,7 +127,7 @@ async function handleCommand(sock, message) {
       }
       
       if (!isBlocked) {
-        await sendBotMessage(sock, jid, { 
+        await sock.sendMessage(jid, { 
           text: 'ℹ️ Bot já está ativo.' 
         }).catch(() => {});
         return true;
@@ -205,14 +137,14 @@ async function handleCommand(sock, message) {
         await unblockBotForUser(jid);
         log('SUCCESS', `🔓 Bot LIBERADO via comando`);
         
-        await sendBotMessage(sock, jid, { 
+        await sock.sendMessage(jid, { 
           text: `✅ *Bot liberado!*\n\n🤖 Atendimento automático reativado.` 
         }).catch(() => {});
         
         return true;
       } catch (err) {
         log('WARNING', `⚠️ Erro ao liberar: ${err.message}`);
-        await sendBotMessage(sock, jid, { 
+        await sock.sendMessage(jid, { 
           text: '❌ Erro ao liberar bot.' 
         }).catch(() => {});
         return true;
@@ -228,7 +160,7 @@ async function handleCommand(sock, message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL
+ * 🔥 HANDLER PRINCIPAL - VERSÃO CORRIGIDA
  */
 export async function handleIncomingMessage(sock, message) {
   try {
@@ -239,9 +171,19 @@ export async function handleIncomingMessage(sock, message) {
     
     if (!messageText) return;
 
-    // 🔥 BLOQUEIO AUTOMÁTICO: Owner enviou mensagem manual
-    if (isOwnerManualMessage(message)) {
-      log('INFO', `👤 Owner enviou mensagem MANUAL para ${extractPhoneNumber(jid)}`);
+    // 🔥 DETECTA MENSAGEM MANUAL DO OWNER
+    // fromMe=true significa que foi enviada pelo número conectado ao bot
+    // Se for do owner, bloqueia automaticamente
+    if (message?.key?.fromMe) {
+      const senderPhone = extractPhoneNumber(jid);
+      
+      if (isOwnerPhone(senderPhone)) {
+        // Owner está no chat - não faz nada (é mensagem dele mesmo)
+        return;
+      }
+      
+      // fromMe=true para outro JID = Owner enviou mensagem manual para cliente
+      log('INFO', `👤 Owner enviou mensagem MANUAL para ${senderPhone}`);
       
       try {
         await blockBotForUser(jid);
@@ -252,9 +194,6 @@ export async function handleIncomingMessage(sock, message) {
       
       return;
     }
-
-    // Ignora mensagens do bot
-    if (message?.key?.fromMe) return;
 
     // Debounce
     const now = Date.now();
@@ -285,11 +224,11 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     if (isBlocked) {
-      log('WARNING', `🚫 Bot bloqueado para ${pushName} - Atendimento manual`);
+      log('WARNING', `🚫 Bot bloqueado - Atendimento manual ativo`);
       return;
     }
 
-    // PASSO 3: Verifica primeira interação
+    // PASSO 3: Verifica primeira interação no BANCO DE DADOS
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -300,16 +239,16 @@ export async function handleIncomingMessage(sock, message) {
     
     const isFirstContact = !userExists;
     
-    // 🔥 PRIMEIRA MENSAGEM
+    // 🔥 PRIMEIRA MENSAGEM = BOAS-VINDAS ÚNICA
     if (isFirstContact) {
-      const isLead = isNewLead(cleanedMessage);
+      const hasLeadKeywords = isNewLead(cleanedMessage);
       
       await saveUser(jid, { 
         name: pushName,
-        isNewLead: isLead
+        isNewLead: hasLeadKeywords
       });
       
-      if (isLead) {
+      if (hasLeadKeywords) {
         await markAsNewLead(jid, pushName);
         log('SUCCESS', `🎯 NOVO LEAD: ${pushName}`);
       } else {
@@ -318,9 +257,10 @@ export async function handleIncomingMessage(sock, message) {
       
       await simulateTyping(sock, jid, 1500);
       
+      // Boas-vindas genéricas (sem diferenciação)
       const welcomeMsg = await generateWelcomeMessage(pushName, false);
       
-      await sendBotMessage(sock, jid, { text: welcomeMsg }).catch(() => {});
+      await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
       try {
         await saveConversationHistory(jid, [
@@ -335,23 +275,23 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // 🔥 MENSAGENS SUBSEQUENTES
-    log('INFO', `📨 Mensagem subsequente de ${pushName}`);
+    // 🔥 MENSAGENS SEGUINTES = SEM BOAS-VINDAS
+    log('INFO', `📨 Mensagem de ${pushName}`);
     
     await saveUser(jid, { name: pushName });
     
-    const wasMarkedAsLead = await isLeadUser(jid);
+    const isLead = await isLeadUser(jid);
     
     await simulateTyping(sock, jid, 1500);
     
     let aiResponse;
     
-    if (wasMarkedAsLead) {
+    if (isLead) {
       aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
       
       if (shouldSendFanpageLink(cleanedMessage)) {
         await simulateTyping(sock, jid, 1000);
-        await sendBotMessage(sock, jid, { text: FANPAGE_MESSAGE }).catch(() => {});
+        await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch(() => {});
       }
       
       log('SUCCESS', `✅ Resposta IA (LEAD)`);
@@ -360,7 +300,7 @@ export async function handleIncomingMessage(sock, message) {
       log('SUCCESS', `✅ Resposta IA (CLIENTE)`);
     }
     
-    await sendBotMessage(sock, jid, { text: aiResponse }).catch(() => {});
+    await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
 
   } catch (error) {
     log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
