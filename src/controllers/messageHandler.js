@@ -35,11 +35,8 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
-// 🔥 CRITICAL: welcomeSent GLOBAL - Marca APENAS primeira interação de CADA usuário
-const welcomeSent = new Map();
-
-// 🔥 NOVO: Rastreia quando owner enviou mensagem para bloquear
-const ownerMessageSent = new Map();
+// 🔥 Rastreia APENAS primeira interação GERAL (independente de ser LEAD)
+const firstContactSent = new Map();
 
 function cleanupDebounceMap() {
   const now = Date.now();
@@ -80,6 +77,38 @@ function isOwner(jid) {
   }
   
   return isMatch;
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Detecta mensagem MANUAL do owner
+ * Baileys: fromMe=true pode ser bot OU owner manual
+ * Diferença: Mensagens do bot têm messageTimestamp muito próximo do processamento
+ */
+function isOwnerManualMessage(message) {
+  if (!message?.key?.fromMe) return false;
+  
+  const jid = message.key.remoteJid;
+  if (!isOwner(jid)) return false;
+  
+  // Se não tem texto, ignora (pode ser mídia/status)
+  const text = extractMessageText(message);
+  if (!text) return false;
+  
+  // Heurística: Mensagens do bot são processadas instantaneamente
+  // Mensagens manuais têm delay entre timestamp e recebimento
+  const msgTimestamp = message.messageTimestamp * 1000;
+  const now = Date.now();
+  const delay = now - msgTimestamp;
+  
+  // Se delay < 2s, provavelmente é do bot
+  // Se delay >= 2s, provavelmente é manual
+  const isManual = delay >= 2000;
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `🕐 Delay msg: ${delay}ms - Manual: ${isManual}`);
+  }
+  
+  return isManual;
 }
 
 /**
@@ -185,7 +214,7 @@ async function handleCommand(sock, message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL - TOTALMENTE REFATORADO
+ * 🔥 HANDLER PRINCIPAL - CORRIGIDO
  */
 export async function handleIncomingMessage(sock, message) {
   try {
@@ -197,27 +226,23 @@ export async function handleIncomingMessage(sock, message) {
     
     if (!messageText) return;
 
-    // 🔥 SOLUÇÃO INTELIGENTE: Rastreia quando owner envia mensagem
-    // Baileys marca mensagens com fromMe=true quando QUALQUER mensagem é enviada do seu WhatsApp
-    if (message?.key?.fromMe) {
-      // Marca que owner enviou mensagem para este JID
-      ownerMessageSent.set(jid, Date.now());
-      log('INFO', `📤 Owner enviou mensagem para ${extractPhoneNumber(jid)}`);
-      return; // Não processa mensagens próprias
-    }
-
-    // 🔥 BLOQUEIO AUTOMÁTICO: Se owner enviou mensagem ALGUMA VEZ
-    const ownerLastMessage = ownerMessageSent.get(jid);
-    if (ownerLastMessage) {
-      // Bloqueia automaticamente (SEM LIMITE DE TEMPO)
+    // 🔥 BLOQUEIO AUTOMÁTICO: Detecta mensagem MANUAL do owner
+    if (isOwnerManualMessage(message)) {
+      log('INFO', `👤 Owner enviou mensagem MANUAL para ${extractPhoneNumber(jid)}`);
+      
       try {
         await blockBotForUser(jid);
-        ownerMessageSent.delete(jid); // Limpa rastreamento
-        log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner enviou mensagem)`);
-        return; // Não processa esta mensagem
+        log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner assumiu)`);
       } catch (err) {
         log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
       }
+      
+      return; // Não processa mensagens do owner
+    }
+
+    // Ignora mensagens próprias do bot
+    if (message?.key?.fromMe) {
+      return;
     }
 
     // Debounce
@@ -255,11 +280,11 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // 🔥 PASSO 3: BOAS-VINDAS APENAS NA PRIMEIRA INTERAÇÃO
-    const hasWelcomed = welcomeSent.has(jid);
+    // 🔥 PASSO 3: BOAS-VINDAS (APENAS PRIMEIRA INTERAÇÃO GERAL)
+    const isFirstContact = !firstContactSent.has(jid);
     
-    if (!hasWelcomed) {
-      // PRIMEIRA MENSAGEM EVER - Envia boas-vindas
+    if (isFirstContact) {
+      // Verifica se é LEAD (para personalizar boas-vindas)
       const isLead = isNewLead(cleanedMessage);
       
       await saveUser(jid, { 
@@ -269,7 +294,7 @@ export async function handleIncomingMessage(sock, message) {
       
       if (isLead) {
         await markAsNewLead(jid, pushName);
-        log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName}`);
+        log('SUCCESS', `🎯 NOVO LEAD: ${pushName}`);
       }
       
       await simulateTyping(sock, jid, 1500);
@@ -278,8 +303,8 @@ export async function handleIncomingMessage(sock, message) {
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
-      // 🔥 MARCA COMO JÁ ENVIOU BOAS-VINDAS (NUNCA MAIS ENVIA)
-      welcomeSent.set(jid, now);
+      // 🔥 MARCA COMO "JÁ TEVE PRIMEIRO CONTATO"
+      firstContactSent.set(jid, now);
       
       try {
         await saveConversationHistory(jid, [
@@ -290,24 +315,24 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao salvar histórico: ${err.message}`);
       }
       
-      log('SUCCESS', `✅ Boas-vindas ENVIADAS (primeira interação)`);
+      log('SUCCESS', `✅ Boas-vindas enviadas (primeira interação)`);
       return;
     }
 
-    // 🔥 PASSO 4: MENSAGENS SUBSEQUENTES - NUNCA ENVIA BOAS-VINDAS
-    log('INFO', `📨 Mensagem subsequente de ${pushName} (boas-vindas já enviadas)`);
+    // 🔥 PASSO 4: MENSAGENS SUBSEQUENTES
+    log('INFO', `📨 Mensagem de ${pushName} (já teve contato inicial)`);
     
-    // Verifica se é LEAD
-    const isLead = await isLeadUser(jid);
-    
+    // Atualiza dados do usuário
     await saveUser(jid, { name: pushName });
+    
+    // Verifica se é LEAD (pode ter sido marcado anteriormente)
+    const isLead = await isLeadUser(jid);
     
     await simulateTyping(sock, jid, 1500);
     
     let aiResponse;
     
     if (isLead) {
-      // LEAD existente - processa como LEAD
       aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
       
       if (shouldSendFanpageLink(cleanedMessage)) {
@@ -317,7 +342,6 @@ export async function handleIncomingMessage(sock, message) {
       
       log('SUCCESS', `✅ Resposta IA para LEAD`);
     } else {
-      // Cliente regular - processa como CLIENTE
       aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
       log('SUCCESS', `✅ Resposta IA para CLIENTE`);
     }
