@@ -35,6 +35,9 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
+// 🔥 RASTREIA MENSAGENS ENVIADAS PELO BOT
+const botSentMessages = new Set();
+
 function cleanupDebounceMap() {
   const now = Date.now();
   const MAX_AGE = 60000;
@@ -44,6 +47,13 @@ function cleanupDebounceMap() {
       lastMessageTime.delete(jid);
     }
   }
+  
+  // Limpa mensagens antigas (> 5 min)
+  const oldMessages = Array.from(botSentMessages).filter(id => {
+    const timestamp = parseInt(id.split('-')[1] || '0');
+    return now - timestamp > 300000;
+  });
+  oldMessages.forEach(id => botSentMessages.delete(id));
 }
 
 setInterval(cleanupDebounceMap, 120000);
@@ -77,8 +87,8 @@ function isOwner(jid) {
 }
 
 /**
- * 🔥 Detecta mensagem MANUAL do owner
- * IDs do Baileys começam com "3EB0" ou "BAE5"
+ * 🔥 SOLUÇÃO DEFINITIVA: Rastreia mensagens enviadas pelo bot
+ * Se fromMe=true mas NÃO está no Set, é mensagem MANUAL do owner
  */
 function isOwnerManualMessage(message) {
   if (!message?.key?.fromMe) return false;
@@ -89,15 +99,41 @@ function isOwnerManualMessage(message) {
   const text = extractMessageText(message);
   if (!text) return false;
   
-  const messageId = message.key.id || '';
-  const isBotMessage = messageId.startsWith('3EB0') || messageId.startsWith('BAE5');
+  const messageId = message.key.id;
+  
+  // Se o bot enviou, estará no Set
+  const isBotMessage = botSentMessages.has(messageId);
+  
+  // Remove do Set após verificação (evita memory leak)
+  if (isBotMessage) {
+    botSentMessages.delete(messageId);
+  }
+  
   const isManual = !isBotMessage;
   
-  if (process.env.DEBUG_MODE === 'true') {
-    log('INFO', `🕵️ Message ID: ${messageId} - Manual: ${isManual}`);
+  if (isManual) {
+    log('INFO', `🕵️ Mensagem MANUAL detectada (ID: ${messageId})`);
   }
   
   return isManual;
+}
+
+/**
+ * 🔥 Wrapper para sendMessage que registra IDs
+ */
+async function sendBotMessage(sock, jid, content) {
+  const sent = await sock.sendMessage(jid, content);
+  
+  // Registra ID da mensagem enviada pelo bot
+  if (sent?.key?.id) {
+    botSentMessages.add(sent.key.id);
+    
+    if (process.env.DEBUG_MODE === 'true') {
+      log('INFO', `📤 Bot enviou mensagem ID: ${sent.key.id}`);
+    }
+  }
+  
+  return sent;
 }
 
 /**
@@ -121,7 +157,7 @@ async function handleCommand(sock, message) {
     
     if (!isOwner(jid)) {
       log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
-      await sock.sendMessage(jid, { 
+      await sendBotMessage(sock, jid, { 
         text: '❌ Apenas o administrador pode usar comandos.' 
       }).catch(() => {});
       return true;
@@ -135,14 +171,14 @@ async function handleCommand(sock, message) {
         await blockBotForUser(jid);
         log('SUCCESS', `🔒 Bot BLOQUEADO via comando`);
         
-        await sock.sendMessage(jid, { 
+        await sendBotMessage(sock, jid, { 
           text: `✅ *Atendimento assumido!*\n\n🚫 Bot pausado.\n⏰ Expira em 1 hora.` 
         }).catch(() => {});
         
         return true;
       } catch (err) {
         log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
-        await sock.sendMessage(jid, { 
+        await sendBotMessage(sock, jid, { 
           text: '❌ Erro ao bloquear bot.' 
         }).catch(() => {});
         return true;
@@ -159,7 +195,7 @@ async function handleCommand(sock, message) {
       }
       
       if (!isBlocked) {
-        await sock.sendMessage(jid, { 
+        await sendBotMessage(sock, jid, { 
           text: 'ℹ️ Bot já está ativo.' 
         }).catch(() => {});
         return true;
@@ -169,14 +205,14 @@ async function handleCommand(sock, message) {
         await unblockBotForUser(jid);
         log('SUCCESS', `🔓 Bot LIBERADO via comando`);
         
-        await sock.sendMessage(jid, { 
+        await sendBotMessage(sock, jid, { 
           text: `✅ *Bot liberado!*\n\n🤖 Atendimento automático reativado.` 
         }).catch(() => {});
         
         return true;
       } catch (err) {
         log('WARNING', `⚠️ Erro ao liberar: ${err.message}`);
-        await sock.sendMessage(jid, { 
+        await sendBotMessage(sock, jid, { 
           text: '❌ Erro ao liberar bot.' 
         }).catch(() => {});
         return true;
@@ -192,11 +228,10 @@ async function handleCommand(sock, message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL - LÓGICA SIMPLIFICADA
+ * 🔥 HANDLER PRINCIPAL
  */
 export async function handleIncomingMessage(sock, message) {
   try {
-    // Validações básicas
     if (!isValidMessage(message)) return;
     
     const jid = message.key.remoteJid;
@@ -218,7 +253,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // Ignora mensagens próprias do bot
+    // Ignora mensagens do bot
     if (message?.key?.fromMe) return;
 
     // Debounce
@@ -233,7 +268,7 @@ export async function handleIncomingMessage(sock, message) {
     
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}"`);
 
-    // PASSO 1: Comandos têm prioridade
+    // PASSO 1: Comandos
     const isCommandProcessed = await handleCommand(sock, message);
     if (isCommandProcessed) {
       log('INFO', `⚙️ Comando processado`);
@@ -254,7 +289,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // 🔥 PASSO 3: VERIFICA SE É PRIMEIRA INTERAÇÃO
+    // PASSO 3: Verifica primeira interação
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -265,12 +300,10 @@ export async function handleIncomingMessage(sock, message) {
     
     const isFirstContact = !userExists;
     
-    // 🔥 PRIMEIRA MENSAGEM = BOAS-VINDAS (única vez)
+    // 🔥 PRIMEIRA MENSAGEM
     if (isFirstContact) {
-      // Detecta se é LEAD (apenas para TAG/classificação)
       const isLead = isNewLead(cleanedMessage);
       
-      // Salva usuário no banco
       await saveUser(jid, { 
         name: pushName,
         isNewLead: isLead
@@ -278,15 +311,16 @@ export async function handleIncomingMessage(sock, message) {
       
       if (isLead) {
         await markAsNewLead(jid, pushName);
-        log('SUCCESS', `🎯 NOVO LEAD detectado: ${pushName}`);
+        log('SUCCESS', `🎯 NOVO LEAD: ${pushName}`);
+      } else {
+        log('SUCCESS', `👤 NOVO CLIENTE: ${pushName}`);
       }
       
       await simulateTyping(sock, jid, 1500);
       
-      // 🔥 BOAS-VINDAS ÚNICA (mesma para todos)
       const welcomeMsg = await generateWelcomeMessage(pushName, false);
       
-      await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
+      await sendBotMessage(sock, jid, { text: welcomeMsg }).catch(() => {});
       
       try {
         await saveConversationHistory(jid, [
@@ -297,17 +331,15 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao salvar histórico: ${err.message}`);
       }
       
-      log('SUCCESS', `✅ Boas-vindas enviadas (primeira vez)`);
+      log('SUCCESS', `✅ Boas-vindas enviadas`);
       return;
     }
 
-    // 🔥 DEMAIS MENSAGENS = RESPOSTA NORMAL (sem boas-vindas)
+    // 🔥 MENSAGENS SUBSEQUENTES
     log('INFO', `📨 Mensagem subsequente de ${pushName}`);
     
-    // Atualiza dados do usuário
     await saveUser(jid, { name: pushName });
     
-    // Verifica se foi marcado como LEAD anteriormente
     const wasMarkedAsLead = await isLeadUser(jid);
     
     await simulateTyping(sock, jid, 1500);
@@ -319,16 +351,16 @@ export async function handleIncomingMessage(sock, message) {
       
       if (shouldSendFanpageLink(cleanedMessage)) {
         await simulateTyping(sock, jid, 1000);
-        await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch(() => {});
+        await sendBotMessage(sock, jid, { text: FANPAGE_MESSAGE }).catch(() => {});
       }
       
-      log('SUCCESS', `✅ Resposta IA (contexto: LEAD)`);
+      log('SUCCESS', `✅ Resposta IA (LEAD)`);
     } else {
       aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
-      log('SUCCESS', `✅ Resposta IA (contexto: CLIENTE)`);
+      log('SUCCESS', `✅ Resposta IA (CLIENTE)`);
     }
     
-    await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
+    await sendBotMessage(sock, jid, { text: aiResponse }).catch(() => {});
 
   } catch (error) {
     log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
