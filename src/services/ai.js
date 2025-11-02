@@ -225,7 +225,6 @@ ${contextInstructions}
 
 **QUANDO NÃO SAUDAR:**
 ❌ Em qualquer continuação de conversa
-❌ Quando cliente faz pergunta direta
 ❌ Quando já cumprimentou antes no histórico
 
 **IMPORTANTE:**
@@ -331,11 +330,10 @@ ${contextInstructions}
 
 **QUANDO SAUDAR:**
 ✅ Apenas na primeira mensagem (histórico vazio)
-✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia")
+✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia", "Tenho interesse")
 
 **QUANDO NÃO SAUDAR:**
 ❌ Em qualquer continuação de conversa
-❌ Quando cliente faz pergunta direta
 ❌ Quando já cumprimentou antes no histórico
 
 **USO DO HISTÓRICO:**
@@ -413,7 +411,7 @@ Como posso ajudar você? 😊`;
       // Para clientes existentes
       return `Olá *${customerName}*! 👋
 
-Que bom te ver por aqui, como *Assistente Virtual*, da *Stream Studio*, e vou iniciar seu atendimento ok.
+Que bom te ver por aqui, como *Assistente Virtual* da *Stream Studio*, eu vou iniciar seu atendimento ok.
 
 Como posso ajudar hoje? É sobre algum projeto em andamento, ou alguma conversa já iniciada?
 
