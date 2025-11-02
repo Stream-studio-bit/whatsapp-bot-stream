@@ -225,6 +225,7 @@ ${contextInstructions}
 
 **QUANDO NÃO SAUDAR:**
 ❌ Em qualquer continuação de conversa
+❌ Quando cliente faz pergunta direta
 ❌ Quando já cumprimentou antes no histórico
 
 **IMPORTANTE:**
@@ -334,6 +335,7 @@ ${contextInstructions}
 
 **QUANDO NÃO SAUDAR:**
 ❌ Em qualquer continuação de conversa
+❌ Quando cliente faz pergunta direta
 ❌ Quando já cumprimentou antes no histórico
 
 **USO DO HISTÓRICO:**
