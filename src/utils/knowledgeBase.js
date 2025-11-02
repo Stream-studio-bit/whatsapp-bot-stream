@@ -6,8 +6,8 @@ dotenv.config();
  * 🔥 VERSÃO DO PROMPT
  * Útil para rastrear mudanças e rollback se necessário
  */
-export const PROMPT_VERSION = '2.1.0';
-export const LAST_UPDATED = '2025-01-27';
+export const PROMPT_VERSION = '2.2.0';
+export const LAST_UPDATED = '2025-02-02';
 
 /**
  * BASE DE CONHECIMENTO - CHAT BOT MULTI-TAREFAS
@@ -120,6 +120,35 @@ export const KNOWLEDGE_BASE = {
     whatsapp: "(13) 99606-9536",
     fanpage: "https://bot-whatsapp-450420.web.app/",
     atendente: "Roberto"
+  },
+
+  // 🔥 PROMOÇÕES E LINKS (NOVO)
+  promocoes: {
+    instagram: {
+      link: "https://www.instagram.com/p/DQhv5ExknSa/?img_index=1",
+      beneficio_1: "Deixe like e comentário no anúncio",
+      premio_1: "Ganhe 3 meses de suporte técnico gratuito",
+      beneficio_2: "Faça vídeo mostrando o bot funcionando e marque nosso perfil",
+      premio_2: "Receba configuração gratuita de hospedagem na nuvem"
+    },
+    fanpage_demo: "https://bot-whatsapp-450420.web.app/",
+    descricao_demo: "Veja demonstração completa e solicite teste gratuito"
+  },
+
+  // 🔥 HOSPEDAGEM (NOVO)
+  hospedagem: {
+    local: {
+      tipo: "Computador pessoal",
+      funcionamento: "Bot funciona apenas quando computador está ligado",
+      custo: "Nenhum custo adicional",
+      vantagem: "Instalação imediata"
+    },
+    nuvem: {
+      tipo: "Servidor 24/7",
+      funcionamento: "Bot roda 24 horas por dia, 7 dias por semana",
+      custo: "Configuração gratuita (promoção Instagram)",
+      vantagem: "Não precisa manter computador ligado"
+    }
   },
 
   // PROCESSO DE COMPRA
@@ -255,6 +284,22 @@ Você: "Olá! Claro! O bot custa R$ 499,00 e pode parcelar..." ← ❌ Cumprimen
 - Email: stream.produtora@gmail.com
 - Fanpage: https://bot-whatsapp-450420.web.app/
 
+## 🎁 PROMOÇÕES ESPECIAIS:
+
+**INSTAGRAM:**
+🔗 Link: https://www.instagram.com/p/DQhv5ExknSa/?img_index=1
+💝 Like + Comentário = 3 meses de suporte grátis
+🎥 Vídeo mostrando bot + marcar perfil = Hospedagem na nuvem gratuita
+
+**FANPAGE:**
+🌐 Demonstração: https://bot-whatsapp-450420.web.app/
+✅ Solicite teste gratuito pelo formulário
+
+**HOSPEDAGEM:**
+🏠 LOCAL: Bot roda quando computador está ligado
+☁️ NUVEM: Bot roda 24/7 (não precisa deixar PC ligado)
+🎁 Configuração na nuvem GRÁTIS com promoção Instagram
+
 ## INSTRUÇÕES DE ATENDIMENTO:
 
 1. **Seja cordial e profissional**
@@ -270,18 +315,22 @@ Você: "Olá! Claro! O bot custa R$ 499,00 e pode parcelar..." ← ❌ Cumprimen
 5. **SEMPRE encaminhe para a fanpage:** 
    "Para ver a demonstração completa e solicitar o bot, acesse: https://bot-whatsapp-450420.web.app/"
 
-6. **Se o cliente perguntar algo que você não sabe:**
+6. **Mencione as promoções do Instagram quando apropriado:**
+   - Cliente interessado em suporte? → Fale dos 3 meses grátis
+   - Cliente perguntou sobre hospedagem? → Ofereça configuração grátis na nuvem
+
+7. **Se o cliente perguntar algo que você não sabe:**
    "Para essa questão específica, recomendo falar direto com o Roberto pelo WhatsApp: (13) 99606-9536"
 
-7. **Nunca invente informações** - use apenas o conhecimento fornecido
+8. **Nunca invente informações** - use apenas o conhecimento fornecido
 
-8. **Seja entusiasta mas honesto** - não exagere nos benefícios
+9. **Seja entusiasta mas honesto** - não exagere nos benefícios
 
-9. **Mantenha respostas com no máximo 10 linhas** - seja conciso
+10. **Mantenha respostas com no máximo 10 linhas** - seja conciso
 
-10. **Sempre finalize oferecendo acesso à fanpage ou contato direto**
+11. **Sempre finalize oferecendo acesso à fanpage ou contato direto**
 
-11. **🔥 NOVO: Use o histórico para criar continuidade natural na conversa**
+12. **🔥 NOVO: Use o histórico para criar continuidade natural na conversa**
 
 ## EXEMPLO DE CONVERSA COM BOA CONTEXTUALIZAÇÃO:
 
@@ -312,7 +361,9 @@ Você: "No valor promocional que mencionei (R$ 499,00), você recebe:
 ✅ Checkout de pagamento
 ✅ 30 dias de suporte técnico
 
-E o melhor: roda no seu computador, sem VPS! 🚀"
+E o melhor: roda no seu computador, sem VPS! 🚀
+
+🎁 BÔNUS: Deixe like no nosso post do Instagram e ganhe +3 meses de suporte grátis!"
 
 ← ✅ Note que NÃO repetiu o preço detalhadamente, apenas referenciou
 
@@ -383,6 +434,15 @@ export function validateKnowledgeBase() {
   // Valida funcionalidades
   if (!KNOWLEDGE_BASE.funcionalidades?.delivery || KNOWLEDGE_BASE.funcionalidades.delivery.length === 0) {
     errors.push('Funcionalidades não definidas');
+  }
+  
+  // 🔥 Valida novas seções
+  if (!KNOWLEDGE_BASE.promocoes?.instagram?.link) {
+    errors.push('Link do Instagram não definido');
+  }
+  
+  if (!KNOWLEDGE_BASE.hospedagem?.local || !KNOWLEDGE_BASE.hospedagem?.nuvem) {
+    errors.push('Informações de hospedagem incompletas');
   }
   
   return {
@@ -463,6 +523,7 @@ export function showKnowledgeSummary() {
   console.log(`💰 Preço: ${KNOWLEDGE_BASE.preco.valor_promocional}`);
   console.log(`📱 WhatsApp: ${KNOWLEDGE_BASE.contato.whatsapp}`);
   console.log(`🌐 Fanpage: ${KNOWLEDGE_BASE.contato.fanpage}`);
+  console.log(`🎁 Instagram: ${KNOWLEDGE_BASE.promocoes.instagram.link}`);
   console.log('');
   console.log(`✨ Funcionalidades: ${KNOWLEDGE_BASE.funcionalidades.delivery.length} itens`);
   console.log(`🎯 Diferenciais: ${KNOWLEDGE_BASE.diferenciais.length} itens`);

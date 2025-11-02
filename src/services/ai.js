@@ -46,12 +46,12 @@ function saveConversationHistory(phone, history) {
 }
 
 /**
- * Adiciona mensagem ao histórico
+ * 🔥 EXPORTADA: Adiciona mensagem ao histórico
  * @param {string} phone - Número do telefone
  * @param {string} role - Papel (user ou assistant)
  * @param {string} content - Conteúdo da mensagem
  */
-function addToHistory(phone, role, content) {
+export function addToHistory(phone, role, content) {
   if (!phone || !role || !content) {
     log('WARNING', '⚠️ Tentativa de adicionar mensagem inválida ao histórico');
     return;
@@ -247,7 +247,7 @@ ${contextInstructions}
     ];
     
     if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `🔄 Enviando para IA: ${messages.length} mensagens (incluindo system prompt)`);
+      log('INFO', `📄 Enviando para IA: ${messages.length} mensagens (incluindo system prompt)`);
     }
     
     // Chama a IA
@@ -358,7 +358,7 @@ ${contextInstructions}
     ];
     
     if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `🔄 Enviando para IA: ${messages.length} mensagens`);
+      log('INFO', `📄 Enviando para IA: ${messages.length} mensagens`);
     }
     
     // Chama a IA
@@ -399,12 +399,12 @@ export async function generateWelcomeMessage(customerName, isLead = false) {
       // Para novos leads interessados no bot
       return `Olá ${customerName}! 👋
 
-Sou o *Assistente Virtual da Stream Studio* e estou aqui para tirar suas dúvidas sobre o *Chat Bot Multi-tarefas* para delivery! 🤖
+Sou o *Assistente Virtual da Stream Studio* e fui desenvolvido para iniciar e conduzir seu atendimento ok! 🤖
 
 Pode me perguntar à vontade sobre:
-- Funcionalidades do bot
-- Preços e formas de pagamento
-- Como funciona a instalação
+- O *Chat Bot Multi-tarefas*;
+- Desenvolvimento de sites, aplicativos;
+- Desing, criação de logomarca,
 - Suporte técnico
 - E muito mais!
 
@@ -413,13 +413,13 @@ Como posso ajudar você? 😊`;
       // Para clientes existentes
       return `Olá *${customerName}*! 👋
 
-Eu sou o *Assistente Virtual*, desenvolvido pela *Stream Studio*, e vou iniciar seu atendimento ok.
+Que bom te ver por aqui, como *Assistente Virtual*, da *Stream Studio*, e vou iniciar seu atendimento ok.
 
-Você já possui algum projeto em andamento, ou alguma conversa já iniciada?
+Como posso ajudar hoje? É sobre algum projeto em andamento, ou alguma conversa já iniciada?
 
 ✅ *Se sim*, basta aguardar que o *${ownerName}* logo irá te atender.
 
-❓ *Se ainda não*, me conte, como posso ajudar?`;
+❓ *Se não for*, me conte, como posso ajudar?`;
     }
   } catch (error) {
     log('ERROR', `❌ Erro ao gerar boas-vindas: ${error.message}`);
@@ -551,5 +551,6 @@ export default {
   hasActiveHistory,
   getHistoryStats,
   cleanExpiredHistories,
-  listActiveConversations
+  listActiveConversations,
+  addToHistory  // 🔥 ADICIONADO: Export no objeto default
 };

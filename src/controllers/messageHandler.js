@@ -6,8 +6,7 @@ import {
   isNewLead,
   simulateTyping,
   log,
-  extractPhoneNumber,
-  parseCommand
+  extractPhoneNumber
 } from '../utils/helpers.js';
 
 import {
@@ -27,7 +26,8 @@ import {
   processLeadMessage,
   processClientMessage,
   generateWelcomeMessage,
-  shouldSendFanpageLink
+  shouldSendFanpageLink,
+  addToHistory
 } from '../services/ai.js';
 
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
@@ -49,117 +49,6 @@ function cleanupDebounceMap() {
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 Verifica se número é o owner
- */
-function isOwnerPhone(phone) {
-  if (!phone) return false;
-  
-  const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, '');
-  
-  if (!ownerPhone) {
-    log('WARNING', '⚠️ OWNER_PHONE não configurado no .env');
-    return false;
-  }
-  
-  const cleanPhone = phone.replace(/\D/g, '');
-  
-  return cleanPhone === ownerPhone || 
-         cleanPhone.endsWith(ownerPhone) || 
-         ownerPhone.endsWith(cleanPhone);
-}
-
-/**
- * 🔥 Processa comandos /assumir e /liberar
- */
-async function handleCommand(sock, message) {
-  try {
-    const jid = message.key.remoteJid;
-    const messageText = extractMessageText(message);
-    
-    if (!messageText) return false;
-    
-    const { isCommand, command } = parseCommand(messageText);
-    
-    if (!isCommand) return false;
-    
-    const cmd = command?.toUpperCase() || '';
-    const phone = extractPhoneNumber(jid);
-    
-    log('INFO', `⚙️ Comando detectado: ${cmd}`);
-    
-    if (!isOwnerPhone(phone)) {
-      log('WARNING', `🚫 Comando por usuário NÃO AUTORIZADO`);
-      await sock.sendMessage(jid, { 
-        text: '❌ Apenas o administrador pode usar comandos.' 
-      }).catch(() => {});
-      return true;
-    }
-    
-    log('SUCCESS', `✅ Comando autorizado`);
-    
-    // COMANDO: /assumir
-    if (cmd === 'ASSUME' || cmd === 'ASSUMIR') {
-      try {
-        await blockBotForUser(jid);
-        log('SUCCESS', `🔒 Bot BLOQUEADO via comando`);
-        
-        await sock.sendMessage(jid, { 
-          text: `✅ *Atendimento assumido!*\n\n🚫 Bot pausado.\n⏰ Expira em 1 hora.` 
-        }).catch(() => {});
-        
-        return true;
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
-        await sock.sendMessage(jid, { 
-          text: '❌ Erro ao bloquear bot.' 
-        }).catch(() => {});
-        return true;
-      }
-    }
-    
-    // COMANDO: /liberar
-    if (cmd === 'RELEASE' || cmd === 'LIBERAR') {
-      let isBlocked = false;
-      try {
-        isBlocked = await isBotBlockedForUser(jid);
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao checar bloqueio: ${err.message}`);
-      }
-      
-      if (!isBlocked) {
-        await sock.sendMessage(jid, { 
-          text: 'ℹ️ Bot já está ativo.' 
-        }).catch(() => {});
-        return true;
-      }
-      
-      try {
-        await unblockBotForUser(jid);
-        log('SUCCESS', `🔓 Bot LIBERADO via comando`);
-        
-        await sock.sendMessage(jid, { 
-          text: `✅ *Bot liberado!*\n\n🤖 Atendimento automático reativado.` 
-        }).catch(() => {});
-        
-        return true;
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao liberar: ${err.message}`);
-        await sock.sendMessage(jid, { 
-          text: '❌ Erro ao liberar bot.' 
-        }).catch(() => {});
-        return true;
-      }
-    }
-    
-    return false;
-    
-  } catch (error) {
-    log('WARNING', `⚠️ Erro ao processar comando: ${error.message}`);
-    return false;
-  }
-}
-
-/**
  * 🔥 HANDLER PRINCIPAL - VERSÃO CORRIGIDA
  */
 export async function handleIncomingMessage(sock, message) {
@@ -171,28 +60,20 @@ export async function handleIncomingMessage(sock, message) {
     
     if (!messageText) return;
 
-    // 🔥 DETECTA MENSAGEM MANUAL DO OWNER
-    // fromMe=true significa que foi enviada pelo número conectado ao bot
-    // Se for do owner, bloqueia automaticamente
+    // 🔥 BLOQUEIO AUTOMÁTICO QUANDO OWNER ENVIA MENSAGEM
+    // fromMe=true = mensagem enviada pelo número conectado (owner)
+    // remoteJid = cliente que recebeu (quem deve ser bloqueado)
     if (message?.key?.fromMe) {
-      const senderPhone = extractPhoneNumber(jid);
-      
-      if (isOwnerPhone(senderPhone)) {
-        // Owner está no chat - não faz nada (é mensagem dele mesmo)
-        return;
-      }
-      
-      // fromMe=true para outro JID = Owner enviou mensagem manual para cliente
-      log('INFO', `👤 Owner enviou mensagem MANUAL para ${senderPhone}`);
+      const clientJid = message.key.remoteJid;
       
       try {
-        await blockBotForUser(jid);
-        log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner assumiu)`);
+        await blockBotForUser(clientJid);
+        log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner assumiu atendimento)`);
       } catch (err) {
         log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
       }
       
-      return;
+      return; // Bloqueia e para processamento
     }
 
     // Debounce
@@ -207,14 +88,7 @@ export async function handleIncomingMessage(sock, message) {
     
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}"`);
 
-    // PASSO 1: Comandos
-    const isCommandProcessed = await handleCommand(sock, message);
-    if (isCommandProcessed) {
-      log('INFO', `⚙️ Comando processado`);
-      return;
-    }
-
-    // PASSO 2: Verifica bloqueio
+    // PASSO 1: Verifica bloqueio
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
@@ -228,7 +102,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // PASSO 3: Verifica primeira interação no BANCO DE DADOS
+    // PASSO 2: Verifica primeira interação no BANCO DE DADOS
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -262,13 +136,23 @@ export async function handleIncomingMessage(sock, message) {
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
+      // 🔥 REGISTRA BOAS-VINDAS NO HISTÓRICO DA IA
+      try {
+        addToHistory(phone, 'user', cleanedMessage);
+        addToHistory(phone, 'assistant', welcomeMsg);
+        log('SUCCESS', `📝 Histórico de boas-vindas registrado`);
+      } catch (err) {
+        log('WARNING', `⚠️ Erro ao salvar histórico da IA: ${err.message}`);
+      }
+      
+      // Salva também no banco de dados
       try {
         await saveConversationHistory(jid, [
           { role: 'user', content: cleanedMessage },
           { role: 'assistant', content: welcomeMsg }
         ]);
       } catch (err) {
-        log('WARNING', `⚠️ Erro ao salvar histórico: ${err.message}`);
+        log('WARNING', `⚠️ Erro ao salvar histórico no DB: ${err.message}`);
       }
       
       log('SUCCESS', `✅ Boas-vindas enviadas`);
