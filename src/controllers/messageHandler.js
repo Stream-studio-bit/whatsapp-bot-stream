@@ -60,24 +60,22 @@ export async function handleIncomingMessage(sock, message) {
     
     if (!messageText) return;
 
-    // 🔥 BLOQUEIO AUTOMÁTICO: OWNER DIGITOU MANUALMENTE
-    // fromMe=true = mensagem foi enviada pelo número conectado (owner)
-    // Bloqueia o bot para aquele cliente específico
+    // 🔥 BLOQUEIO AUTOMÁTICO DA IA: OWNER DIGITOU MANUALMENTE
+    // fromMe=true significa que a mensagem FOI ENVIADA pelo owner
+    // Nesse caso, BLOQUEIA A IA para aquele cliente (owner assumiu atendimento)
     if (message?.key?.fromMe) {
-      const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, '');
       const clientPhone = extractPhoneNumber(jid);
       
-      // NÃO bloqueia se owner está falando consigo mesmo
-      if (ownerPhone && clientPhone !== ownerPhone) {
-        try {
-          await blockBotForUser(jid);
-          log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner assumiu atendimento de ${clientPhone})`);
-        } catch (err) {
-          log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
-        }
+      log('INFO', `👤 Owner digitou mensagem manual para ${clientPhone}`);
+      
+      try {
+        await blockBotForUser(jid);
+        log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu atendimento manual`);
+      } catch (err) {
+        log('WARNING', `⚠️ Erro ao bloquear IA: ${err.message}`);
       }
       
-      return; // Sempre retorna quando fromMe=true (não processa mensagens do owner)
+      return; // Para processamento (owner já respondeu, IA não deve agir)
     }
 
     // Debounce
@@ -102,7 +100,7 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     if (isBlocked) {
-      log('WARNING', `🚫 Bot bloqueado - Atendimento manual ativo`);
+      log('WARNING', `🚫 Bot bloqueado - Atendimento manual ativo para ${phone}`);
       return;
     }
 
@@ -135,8 +133,8 @@ export async function handleIncomingMessage(sock, message) {
       
       await simulateTyping(sock, jid, 1500);
       
-      // Boas-vindas genéricas (sem diferenciação)
-      const welcomeMsg = await generateWelcomeMessage(pushName, false);
+      // 🔥 CORREÇÃO: Passa TRUE se for Lead, FALSE se for Cliente
+      const welcomeMsg = await generateWelcomeMessage(pushName, hasLeadKeywords);
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
       
@@ -159,7 +157,7 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao salvar histórico no DB: ${err.message}`);
       }
       
-      log('SUCCESS', `✅ Boas-vindas enviadas`);
+      log('SUCCESS', `✅ Boas-vindas enviadas (${hasLeadKeywords ? 'LEAD' : 'CLIENTE'})`);
       return;
     }
 
