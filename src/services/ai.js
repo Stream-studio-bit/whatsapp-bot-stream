@@ -221,7 +221,7 @@ ${contextInstructions}
 
 **QUANDO SAUDAR:**
 ✅ Apenas na primeira mensagem (histórico vazio)
-✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia")
+✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia", "Tenho interesse")
 
 **QUANDO NÃO SAUDAR:**
 ❌ Em qualquer continuação de conversa

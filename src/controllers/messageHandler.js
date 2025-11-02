@@ -60,20 +60,24 @@ export async function handleIncomingMessage(sock, message) {
     
     if (!messageText) return;
 
-    // 🔥 BLOQUEIO AUTOMÁTICO QUANDO OWNER ENVIA MENSAGEM
-    // fromMe=true = mensagem enviada pelo número conectado (owner)
-    // remoteJid = cliente que recebeu (quem deve ser bloqueado)
+    // 🔥 BLOQUEIO AUTOMÁTICO: OWNER DIGITOU MANUALMENTE
+    // fromMe=true = mensagem foi enviada pelo número conectado (owner)
+    // Bloqueia o bot para aquele cliente específico
     if (message?.key?.fromMe) {
-      const clientJid = message.key.remoteJid;
+      const ownerPhone = process.env.OWNER_PHONE?.replace(/\D/g, '');
+      const clientPhone = extractPhoneNumber(jid);
       
-      try {
-        await blockBotForUser(clientJid);
-        log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner assumiu atendimento)`);
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
+      // NÃO bloqueia se owner está falando consigo mesmo
+      if (ownerPhone && clientPhone !== ownerPhone) {
+        try {
+          await blockBotForUser(jid);
+          log('SUCCESS', `🔒 Bot BLOQUEADO automaticamente (owner assumiu atendimento de ${clientPhone})`);
+        } catch (err) {
+          log('WARNING', `⚠️ Erro ao bloquear: ${err.message}`);
+        }
       }
       
-      return; // Bloqueia e para processamento
+      return; // Sempre retorna quando fromMe=true (não processa mensagens do owner)
     }
 
     // Debounce
