@@ -386,7 +386,7 @@ ${contextInstructions}
 }
 
 /**
- * Gera resposta de boas-vindas inteligente com IA
+ * 🔥 CORRIGIDA: Gera resposta de boas-vindas inteligente com IA
  * @param {string} customerName - Nome do cliente
  * @param {boolean} isLead - Se é um novo lead
  * @returns {Promise<string>}
@@ -395,11 +395,13 @@ export async function generateWelcomeMessage(customerName, isLead = false) {
   try {
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     
+    // 🔥 CORREÇÃO: Sempre usa mensagem de Lead para primeira interação
+    // Parâmetro isLead agora sempre recebe TRUE do messageHandler.js
     if (isLead) {
-      // Para novos leads interessados no bot
+      // Para novos leads/contatos (SEMPRE na primeira mensagem)
       return `Olá ${customerName}! 👋
 
-Sou o *Assistente Virtual da Stream Studio* e fui desenvolvido para iniciar e conduzir seu atendimento ok! 🤖
+Sou o *Assistente Virtual da Stream Studio* e darei inicio ao seu atendimento ok! 🤖
 
 Pode me perguntar à vontade sobre:
 - O *Chat Bot Multi-tarefas*;
@@ -410,10 +412,10 @@ Pode me perguntar à vontade sobre:
 
 Como posso ajudar você? 😊`;
     } else {
-      // Para clientes existentes
+      // Para clientes recorrentes (NÃO USADO mais na primeira mensagem)
       return `Olá *${customerName}*! 👋
 
-Que bom te ver por aqui, como *Assistente Virtual* da *Stream Studio*, eu vou iniciar seu atendimento ok.
+Que bom te ver por aqui! 
 
 Como posso ajudar hoje? É sobre algum projeto em andamento, ou alguma conversa já iniciada?
 
@@ -552,5 +554,5 @@ export default {
   getHistoryStats,
   cleanExpiredHistories,
   listActiveConversations,
-  addToHistory  // 🔥 ADICIONADO: Export no objeto default
+  addToHistory
 };

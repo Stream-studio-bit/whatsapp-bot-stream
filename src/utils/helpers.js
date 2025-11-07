@@ -206,7 +206,8 @@ export function isGreeting(message) {
 }
 
 /**
- * Verifica se é um lead interessado no Chat Bot Multi-tarefas
+ * 🔥 CORREÇÃO: Verifica se é um lead interessado no Chat Bot Multi-tarefas
+ * Detecta keywords de interesse, mas não é mais usado para definir tipo de saudação
  * @param {string} message - Mensagem recebida
  * @returns {boolean}
  */
@@ -221,7 +222,11 @@ export function isNewLead(message) {
     'saber mais',
     'tenho interesse',
     'gostaria de saber',
-    'quero saber'
+    'quero saber',
+    'delivery',
+    'automação',
+    'automatizar',
+    'whatsapp bot'
   ];
   
   const msg = message.trim().toLowerCase();
@@ -321,7 +326,7 @@ export async function simulateTyping(sock, jid, duration = 1500) {
 }
 
 /**
- * Valida se é uma mensagem válida para processar
+ * 🔥 CORREÇÃO: Valida se é uma mensagem válida para processar
  * @param {Object} message - Objeto da mensagem
  * @returns {boolean}
  */
@@ -335,8 +340,9 @@ export function isValidMessage(message) {
   // Ignora mensagens de grupos (opcional)
   if (message.key?.remoteJid?.endsWith('@g.us')) return false;
   
-  // Ignora mensagens próprias
-  if (message.key?.fromMe) return false;
+  // 🔥 CORREÇÃO: NÃO ignora fromMe aqui (será tratado no messageHandler)
+  // Motivo: Precisamos detectar quando owner envia mensagem para bloquear bot
+  // A validação de fromMe agora é feita no messageHandler.js linha 63
   
   return true;
 }
@@ -409,43 +415,9 @@ export function log(type, message) {
 }
 
 /**
- * Mensagem de boas-vindas para novo lead
- * @param {string} customerName - Nome do cliente
- * @returns {string}
+ * 🔥 REMOVIDO: getNewLeadWelcome() e getReturningClientWelcome()
+ * Motivo: Função generateWelcomeMessage() no ai.js agora controla todas as boas-vindas
  */
-export function getNewLeadWelcome(customerName) {
-  return `Olá ${customerName}! 👋
-
-Sou o *Assistente Virtual da Stream Studio* e estou aqui para tirar suas dúvidas sobre o *Chat Bot Multi-tarefas* para delivery! 🤖
-
-Pode me perguntar à vontade sobre:
-- Funcionalidades do bot
-- Preços e formas de pagamento
-- Como funciona a instalação
-- Suporte técnico
-- E muito mais!
-
-Como posso ajudar você? 😊`;
-}
-
-/**
- * Mensagem de boas-vindas para cliente existente
- * @param {string} customerName - Nome do cliente
- * @returns {string}
- */
-export function getReturningClientWelcome(customerName) {
-  const ownerName = process.env.OWNER_NAME || 'Roberto';
-  
-  return `Olá *${customerName}*! 👋
-
-Eu sou o *Assistente Virtual*, desenvolvido pela *Stream Studio*, e vou iniciar seu atendimento ok.
-
-Você já possui algum projeto em andamento, ou alguma conversa já iniciada?
-
-✅ *Se sim*, basta aguardar que o ${ownerName} logo irá te atender.
-
-❓ *Se ainda não*, me conte, como posso ajudar?`;
-}
 
 /**
  * 🔥 NOVA FUNÇÃO: Testa a função parseCommand
@@ -502,7 +474,5 @@ export default {
   extractMessageText,
   daysDifference,
   log,
-  getNewLeadWelcome,
-  getReturningClientWelcome,
   testParseCommand
 };
