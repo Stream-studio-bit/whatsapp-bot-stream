@@ -35,6 +35,14 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
+// 🔥 NOVO: Armazena timestamp de inicialização
+const BOT_START_TIME = Date.now();
+const MESSAGE_AGE_THRESHOLD = 10000; // 10 segundos
+
+// 🔥 NOVO: Set para rastrear mensagens já processadas
+const processedMessages = new Set();
+const MAX_PROCESSED_CACHE = 1000;
+
 function cleanupDebounceMap() {
   const now = Date.now();
   const MAX_AGE = 60000;
@@ -44,42 +52,167 @@ function cleanupDebounceMap() {
       lastMessageTime.delete(jid);
     }
   }
+  
+  // 🔥 NOVO: Limpa cache de mensagens processadas
+  if (processedMessages.size > MAX_PROCESSED_CACHE) {
+    processedMessages.clear();
+    log('INFO', '🧹 Cache de mensagens processadas limpo');
+  }
 }
 
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 HANDLER PRINCIPAL - VERSÃO CORRIGIDA
+ * 🔥 NOVA FUNÇÃO: Verifica se a mensagem é recente o suficiente
+ */
+function isRecentMessage(message) {
+  try {
+    // Verifica se a mensagem tem timestamp
+    const messageTimestamp = message.messageTimestamp;
+    
+    if (!messageTimestamp) {
+      // Se não tem timestamp, assume que é recente
+      return true;
+    }
+    
+    // Converte timestamp (pode estar em segundos ou milissegundos)
+    let messageTime;
+    if (typeof messageTimestamp === 'object' && messageTimestamp.low) {
+      // Timestamp em formato objeto (Baileys)
+      messageTime = messageTimestamp.low * 1000;
+    } else if (typeof messageTimestamp === 'number') {
+      // Se o número é muito pequeno, está em segundos
+      messageTime = messageTimestamp < 10000000000 
+        ? messageTimestamp * 1000 
+        : messageTimestamp;
+    } else {
+      return true;
+    }
+    
+    const now = Date.now();
+    const messageAge = now - messageTime;
+    
+    // Aceita mensagens até MESSAGE_AGE_THRESHOLD ms antes do bot iniciar
+    return messageAge <= (now - BOT_START_TIME + MESSAGE_AGE_THRESHOLD);
+    
+  } catch (error) {
+    // Em caso de erro, assume que é recente para não perder mensagens
+    if (process.env.DEBUG_MODE === 'true') {
+      log('WARNING', `⚠️ Erro ao verificar idade da mensagem: ${error.message}`);
+    }
+    return true;
+  }
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Verifica se mensagem é válida para processamento
+ */
+function shouldProcessMessage(message) {
+  try {
+    // 1. Valida estrutura básica
+    if (!message || !message.key) {
+      return false;
+    }
+    
+    const jid = message.key.remoteJid;
+    
+    // 2. Ignora mensagens de broadcast/status
+    if (jid === 'status@broadcast' || jid?.includes('broadcast')) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', '⏭️ Ignorando mensagem de broadcast');
+      }
+      return false;
+    }
+    
+    // 3. Ignora grupos (apenas conversas individuais)
+    if (jid?.endsWith('@g.us')) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', '⏭️ Ignorando mensagem de grupo');
+      }
+      return false;
+    }
+    
+    // 4. Verifica se é mensagem individual válida
+    if (!jid?.endsWith('@s.whatsapp.net')) {
+      return false;
+    }
+    
+    // 5. Verifica se já foi processada
+    const messageId = message.key.id;
+    if (messageId && processedMessages.has(messageId)) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', '⏭️ Mensagem já processada, ignorando');
+      }
+      return false;
+    }
+    
+    // 6. Verifica se é mensagem recente
+    if (!isRecentMessage(message)) {
+      if (process.env.DEBUG_MODE === 'true') {
+        log('INFO', '⏭️ Ignorando mensagem antiga (anterior à inicialização)');
+      }
+      return false;
+    }
+    
+    return true;
+    
+  } catch (error) {
+    log('WARNING', `⚠️ Erro ao validar mensagem: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * 🔥 HANDLER PRINCIPAL - VERSÃO CORRIGIDA COM FILTROS ROBUSTOS
  */
 export async function handleIncomingMessage(sock, message) {
   try {
-    // 🔥 VALIDAÇÃO 1: Mensagem válida
-    if (!isValidMessage(message)) return;
+    // 🔥 VALIDAÇÃO 0: Verifica se deve processar
+    if (!shouldProcessMessage(message)) {
+      return;
+    }
+    
+    // 🔥 VALIDAÇÃO 1: Mensagem válida (conteúdo)
+    if (!isValidMessage(message)) {
+      return;
+    }
     
     const jid = message.key.remoteJid;
     const messageText = extractMessageText(message);
     
-    if (!messageText) return;
+    if (!messageText) {
+      return;
+    }
+    
+    // Marca como processada
+    const messageId = message.key.id;
+    if (messageId) {
+      processedMessages.add(messageId);
+    }
 
-    // 🔥 CORREÇÃO 1: BLOQUEIO AUTOMÁTICO - Owner digitou manualmente
-    // fromMe=true = mensagem ENVIADA pelo owner (não recebida)
+    // 🔥 CORREÇÃO PRINCIPAL: BLOQUEIO AUTOMÁTICO
+    // Apenas para mensagens RECENTES do owner
     if (message?.key?.fromMe) {
       const clientPhone = extractPhoneNumber(jid);
       
-      log('INFO', `👤 Owner digitou mensagem manual para ${clientPhone}`);
+      // Verifica se já está bloqueado para evitar bloqueios duplicados
+      const isAlreadyBlocked = await isBotBlockedForUser(jid);
       
-      try {
-        await blockBotForUser(jid);
-        log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu atendimento`);
-      } catch (err) {
-        log('WARNING', `⚠️ Erro ao bloquear IA: ${err.message}`);
+      if (!isAlreadyBlocked) {
+        log('INFO', `👤 Owner enviou mensagem para ${clientPhone} - Bloqueando IA`);
+        
+        try {
+          await blockBotForUser(jid);
+          log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu atendimento`);
+        } catch (err) {
+          log('WARNING', `⚠️ Erro ao bloquear IA: ${err.message}`);
+        }
       }
       
       return; // Para processamento (owner já respondeu)
     }
 
-    // 🔥 CORREÇÃO 2: VERIFICAR BLOQUEIO ANTES DE TUDO
-    // Se IA está bloqueada, ignora QUALQUER mensagem do cliente
+    // 🔥 VERIFICAÇÃO DE BLOQUEIO
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
@@ -94,19 +227,21 @@ export async function handleIncomingMessage(sock, message) {
       return; // 🔥 PARA AQUI - NÃO PROCESSA NADA
     }
 
-    // Debounce (só processa se passou tempo mínimo)
+    // Debounce
     const now = Date.now();
     const lastTime = lastMessageTime.get(jid) || 0;
-    if (now - lastTime < DEBOUNCE_DELAY) return;
+    if (now - lastTime < DEBOUNCE_DELAY) {
+      return;
+    }
     lastMessageTime.set(jid, now);
 
     const cleanedMessage = cleanMessage(messageText);
     const pushName = message.pushName || 'Cliente';
     const phone = extractPhoneNumber(jid);
     
-    log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}"`);
+    log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}${cleanedMessage.length > 50 ? '...' : ''}"`);
 
-    // 🔥 PASSO 1: Verifica se é primeira interação no BANCO DE DADOS
+    // 🔥 PASSO 1: Verifica se é primeira interação
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -117,19 +252,15 @@ export async function handleIncomingMessage(sock, message) {
     
     const isFirstContact = !userExists;
     
-    // 🔥 CORREÇÃO 3: PRIMEIRA MENSAGEM = SEMPRE TRATADO COMO LEAD
-    // Regra: TODO cliente novo recebe mensagem de Lead, independente da palavra
+    // 🔥 PRIMEIRA MENSAGEM = SEMPRE LEAD
     if (isFirstContact) {
-      // Detecta se mensagem tem keywords de interesse no bot
       const hasLeadKeywords = isNewLead(cleanedMessage);
       
-      // Salva no banco
       await saveUser(jid, { 
         name: pushName,
-        isNewLead: true // 🔥 SEMPRE TRUE na primeira vez
+        isNewLead: true
       });
       
-      // Marca como lead se tiver keywords
       if (hasLeadKeywords) {
         await markAsNewLead(jid, pushName);
         log('SUCCESS', `🎯 NOVO LEAD (com keywords): ${pushName}`);
@@ -139,21 +270,22 @@ export async function handleIncomingMessage(sock, message) {
       
       await simulateTyping(sock, jid, 1500);
       
-      // 🔥 CORREÇÃO: SEMPRE passa TRUE para primeira mensagem = mensagem de Lead
       const welcomeMsg = await generateWelcomeMessage(pushName, true);
       
-      await sock.sendMessage(jid, { text: welcomeMsg }).catch(() => {});
+      await sock.sendMessage(jid, { text: welcomeMsg }).catch((err) => {
+        log('WARNING', `⚠️ Erro ao enviar mensagem: ${err.message}`);
+      });
       
-      // Registra no histórico da IA
+      // Registra no histórico
       try {
         addToHistory(phone, 'user', cleanedMessage);
         addToHistory(phone, 'assistant', welcomeMsg);
-        log('SUCCESS', `📝 Histórico de boas-vindas registrado`);
+        log('SUCCESS', `📝 Histórico registrado`);
       } catch (err) {
         log('WARNING', `⚠️ Erro ao salvar histórico da IA: ${err.message}`);
       }
       
-      // Salva também no banco de dados
+      // Salva no banco
       try {
         await saveConversationHistory(jid, [
           { role: 'user', content: cleanedMessage },
@@ -167,38 +299,55 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // 🔥 MENSAGENS SEGUINTES = SEM BOAS-VINDAS
+    // 🔥 MENSAGENS SEGUINTES
     log('INFO', `📨 Mensagem de ${pushName}`);
     
     await saveUser(jid, { name: pushName });
     
-    // Verifica se é lead (usuário pode ter sido marcado como lead antes)
     const isLead = await isLeadUser(jid);
     
     await simulateTyping(sock, jid, 1500);
     
     let aiResponse;
     
-    if (isLead) {
-      aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
-      
-      if (shouldSendFanpageLink(cleanedMessage)) {
-        await simulateTyping(sock, jid, 1000);
-        await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch(() => {});
+    try {
+      if (isLead) {
+        aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
+        
+        if (shouldSendFanpageLink(cleanedMessage)) {
+          await simulateTyping(sock, jid, 1000);
+          await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch((err) => {
+            log('WARNING', `⚠️ Erro ao enviar fanpage: ${err.message}`);
+          });
+        }
+        
+        log('SUCCESS', `✅ Resposta IA (LEAD)`);
+      } else {
+        aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
+        log('SUCCESS', `✅ Resposta IA (CLIENTE)`);
       }
       
-      log('SUCCESS', `✅ Resposta IA (LEAD)`);
-    } else {
-      aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
-      log('SUCCESS', `✅ Resposta IA (CLIENTE)`);
+      if (aiResponse) {
+        await sock.sendMessage(jid, { text: aiResponse }).catch((err) => {
+          log('WARNING', `⚠️ Erro ao enviar resposta: ${err.message}`);
+        });
+      }
+      
+    } catch (error) {
+      log('WARNING', `⚠️ Erro ao gerar resposta da IA: ${error.message}`);
+      
+      // Envia mensagem de erro ao usuário
+      const errorMsg = `Desculpe ${pushName}, estou com dificuldades técnicas no momento. 😅\n\nPor favor, aguarde que logo você será atendido!`;
+      await sock.sendMessage(jid, { text: errorMsg }).catch(() => {});
     }
-    
-    await sock.sendMessage(jid, { text: aiResponse }).catch(() => {});
 
   } catch (error) {
-    log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
-    if (process.env.DEBUG_MODE === 'true') {
-      console.error(error.stack);
+    // Log de erro sem expor detalhes sensíveis
+    if (!error.message?.includes('Connection') && !error.message?.includes('Stream')) {
+      log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
+      if (process.env.DEBUG_MODE === 'true') {
+        console.error('Stack trace:', error.stack);
+      }
     }
   }
 }
@@ -213,7 +362,29 @@ export async function processMessage(sock, message) {
   }
 }
 
+/**
+ * 🔥 NOVA FUNÇÃO: Reseta o cache de mensagens processadas
+ */
+export function resetProcessedMessages() {
+  processedMessages.clear();
+  log('SUCCESS', '✅ Cache de mensagens processadas resetado');
+}
+
+/**
+ * 🔥 NOVA FUNÇÃO: Obtém estatísticas do handler
+ */
+export function getHandlerStats() {
+  return {
+    botStartTime: new Date(BOT_START_TIME).toISOString(),
+    processedMessagesCount: processedMessages.size,
+    debounceCacheSize: lastMessageTime.size,
+    messageAgeThreshold: `${MESSAGE_AGE_THRESHOLD}ms`
+  };
+}
+
 export default {
   handleIncomingMessage,
-  processMessage
+  processMessage,
+  resetProcessedMessages,
+  getHandlerStats
 };
