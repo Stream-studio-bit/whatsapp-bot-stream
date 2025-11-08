@@ -260,6 +260,12 @@ async function connectWhatsApp() {
     return null;
   }
   
+  // 🔥 CORREÇÃO: Se socket ativo, não reconecta
+  if (globalSock && globalSock.user) {
+    log('WARNING', '⚠️ Socket já conectado - ignorando nova conexão');
+    return globalSock;
+  }
+  
   // Limite de tentativas
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     log('ERROR', `❌ Limite de ${MAX_RECONNECT_ATTEMPTS} tentativas atingido`);
@@ -396,15 +402,27 @@ async function connectWhatsApp() {
           return; // NÃO reconecta
         }
 
-        // CASO 3: restartRequired - Reconecta imediatamente
+        // CASO 3: restartRequired - Reconecta com delay adequado
         if (shouldRestart) {
           log('WARNING', '⚠️ Restart necessário - reconectando...');
+          
+          // 🔥 CORREÇÃO: Limpa socket anterior antes de reconectar
+          if (globalSock) {
+            try {
+              globalSock.end();
+            } catch (e) {
+              // Ignora erros de limpeza
+            }
+            globalSock = null;
+          }
+          
           isConnecting = false;
           reconnectAttempts = 0;
           
+          // 🔥 CORREÇÃO: Aguarda 5s para WhatsApp processar desconexão anterior
           setTimeout(() => {
             connectWhatsApp();
-          }, 1000);
+          }, 5000); // Aumentado de 1s para 5s
           return;
         }
 
