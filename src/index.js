@@ -16,7 +16,8 @@ import readline from 'readline';
 // 🔧 Importações para keep-alive
 import express from 'express';
 import keepAlive from './keep-alive.js';
-import { startServer } from './server.js';
+// 🔧 Removido import de startServer (conflita com setupHealthServer)
+// import { startServer } from './server.js';
 import { validateGroqConfig } from './config/groq.js';
 import { log } from './utils/helpers.js';
 import { printStats, cleanExpiredBlocks } from './services/database.js';
@@ -143,14 +144,8 @@ function initializeOnce() {
   log('INFO', '💓 Iniciando keep-alive...');
   keepAlive();
   
-  // 🔧 Se estiver no Render, também inicia o servidor adicional (se existir)
-  if (process.env.RENDER === 'true') {
-    try {
-      startServer();
-    } catch (error) {
-      log('WARNING', `⚠️ Server.js não encontrado ou erro: ${error.message}`);
-    }
-  }
+  // 🔧 NÃO inicia startServer() - conflita com setupHealthServer()
+  // O setupHealthServer() já fornece todos os endpoints necessários
   
   if (!validateGroqConfig()) {
     console.error('\n❌ Configure GROQ_API_KEY no .env!\n');
