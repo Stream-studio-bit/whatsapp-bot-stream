@@ -360,10 +360,8 @@ async function connectWhatsApp() {
     // Conecta MongoDB
     if (!mongoClient) {
       log('INFO', '🔗 Conectando ao MongoDB...');
-      mongoClient = new MongoClient(MONGODB_URI, { 
-        useNewUrlParser: true, 
-        useUnifiedTopology: true 
-      });
+      // 🔧 Removido opções obsoletas (useNewUrlParser e useUnifiedTopology)
+      mongoClient = new MongoClient(MONGODB_URI);
       await mongoClient.connect();
       log('SUCCESS', '✅ MongoDB conectado!');
     }
