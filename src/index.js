@@ -32,53 +32,51 @@ const BOT_NAME = process.env.BOT_NAME || 'Assistente Stream Studio';
 const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
 const PORT = process.env.PORT || 3000;
 
-// 🔥 CORREÇÃO #1: Configurações de reconexão ajustáveis
+// Configurações de reconexão
 const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.MAX_RECONNECT_ATTEMPTS) || 5;
 const INITIAL_RECONNECT_DELAY = parseInt(process.env.INITIAL_RECONNECT_DELAY) || 5000;
-const MAX_RECONNECT_DELAY = parseInt(process.env.MAX_RECONNECT_DELAY) || 300000; // 5 minutos
-const RECONNECT_RESET_TIME = parseInt(process.env.RECONNECT_RESET_TIME) || 900000; // 15 minutos
+const MAX_RECONNECT_DELAY = parseInt(process.env.MAX_RECONNECT_DELAY) || 300000;
+const RECONNECT_RESET_TIME = parseInt(process.env.RECONNECT_RESET_TIME) || 900000;
 
-// 🔥 CORREÇÃO #2: Timeouts aumentados para estabilidade
-const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000; // 2 minutos
+// Timeouts
+const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000;
 const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
-const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000; // 1 minuto
+const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
 // ============================================
-// 🔥 ESTADO GLOBAL PERSISTENTE
+// 🔥 ESTADO GLOBAL
 // ============================================
 let mongoClient = null;
 let globalSock = null;
 let reconnectAttempts = 0;
 let isConnecting = false;
-let isReconnecting = false; // 🔥 CORREÇÃO #7: Novo estado
+let isReconnecting = false;
 let isInitialized = false;
 let httpServer = null;
-let lastReconnectTime = 0; // 🔥 CORREÇÃO #6: Rastreamento de tempo
-let totalReconnectAttempts = 0; // 🔥 CORREÇÃO #6: Contador global
+let lastReconnectTime = 0;
+let totalReconnectAttempts = 0;
 
-// 🔥 CRITICAL: msgRetryCounterCache FORA do socket (previne loop)
+// 🔥 CRITICAL: msgRetryCounterCache FORA do socket
 const msgRetryCounterCache = new NodeCache();
 
-// Cache de mensagens processadas (anti-duplicação)
+// Cache de mensagens processadas
 const processedMessages = new Set();
 const MESSAGE_CACHE_LIMIT = 1000;
-
-// 🔥 CRITICAL: welcomeSent GLOBAL (não reseta em reconexões)
-const welcomeSent = new Map();
 
 // Cleanup interval
 let cleanupInterval = null;
 
-// 🔥 CORREÇÃO #2: Função de backoff exponencial
+// ============================================
+// 🔥 FUNÇÕES AUXILIARES
+// ============================================
 function getReconnectDelay(attempt) {
   const delay = Math.min(
     INITIAL_RECONNECT_DELAY * Math.pow(2, attempt),
     MAX_RECONNECT_DELAY
   );
-  return delay + Math.random() * 1000; // Adiciona jitter
+  return delay + Math.random() * 1000;
 }
 
-// 🔥 CORREÇÃO #6: Reseta contador após período sem falhas
 function scheduleReconnectReset() {
   setTimeout(() => {
     if (globalSock && globalSock.user) {
@@ -93,13 +91,13 @@ function scheduleReconnectReset() {
 // ============================================
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════╝');
+  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝');
   console.log('');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot Name: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
@@ -109,10 +107,9 @@ function showBanner() {
 }
 
 // ============================================
-// 🔥 CORREÇÃO #3: SERVIDOR HTTP PROTEGIDO
+// 🔥 SERVIDOR HTTP
 // ============================================
 function setupHealthServer() {
-  // 🔥 Previne múltiplas inicializações
   if (httpServer) {
     log('WARNING', '⚠️  Servidor HTTP já está rodando');
     return httpServer;
@@ -120,7 +117,6 @@ function setupHealthServer() {
 
   const app = express();
   
-  // Endpoint de health check
   app.get('/health', (req, res) => {
     const status = {
       status: 'online',
@@ -142,7 +138,6 @@ function setupHealthServer() {
     res.status(200).json(status);
   });
   
-  // Endpoint raiz
   app.get('/', (req, res) => {
     res.send(`
       <html>
@@ -169,7 +164,6 @@ function setupHealthServer() {
     `);
   });
   
-  // 🔥 Novo endpoint de status detalhado
   app.get('/status', (req, res) => {
     res.json({
       service: 'WhatsApp Bot Stream Studio',
@@ -299,7 +293,7 @@ async function useMongoDBAuthState(collection) {
 }
 
 // ============================================
-// 🔥 getMessage - CORREÇÃO CRÍTICA
+// 🔥 getMessage
 // ============================================
 async function getMessageFromDB(key) {
   try {
@@ -354,7 +348,6 @@ function startPeriodicTasks() {
     try {
       await cleanExpiredBlocks();
       
-      // Limpa cache de mensagens
       if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
         const excess = processedMessages.size - MESSAGE_CACHE_LIMIT;
         const iterator = processedMessages.values();
@@ -364,49 +357,32 @@ function startPeriodicTasks() {
         }
         log('INFO', `🧹 Cache limpo: ${excess} mensagens`);
       }
-      
-      // 🔥 Limpa welcomeSent após 1 hora
-      const now = Date.now();
-      for (const [jid, timestamp] of welcomeSent.entries()) {
-        if (now - timestamp > 3600000) {
-          welcomeSent.delete(jid);
-        }
-      }
     } catch (error) {
       log('WARNING', `⚠️ Erro no cleanup: ${error.message}`);
     }
-  }, 5 * 60 * 1000); // 5 minutos
+  }, 5 * 60 * 1000);
   
   log('SUCCESS', '✅ Tarefas periódicas iniciadas');
 }
 
 // ============================================
-// 🔥 EXPORTA welcomeSent PARA messageHandler
-// ============================================
-export { welcomeSent };
-
-// ============================================
-// 🔥 CONEXÃO WHATSAPP - TOTALMENTE CORRIGIDO
+// 🔥 CONEXÃO WHATSAPP - SEM ALTERAÇÕES CRÍTICAS
 // ============================================
 async function connectWhatsApp() {
-  // 🔥 CORREÇÃO #7: Previne múltiplas conexões simultâneas
   if (isConnecting || isReconnecting) {
     log('WARNING', '⚠️ Conexão/reconexão já em andamento...');
     return null;
   }
   
-  // 🔥 CORREÇÃO #7: Se socket ativo, não reconecta
   if (globalSock && globalSock.user) {
     log('WARNING', '⚠️ Socket já conectado - ignorando nova conexão');
     return globalSock;
   }
   
-  // 🔥 CORREÇÃO #6: Limite de tentativas com contador global
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     log('ERROR', `❌ Limite de ${MAX_RECONNECT_ATTEMPTS} tentativas atingido`);
     log('INFO', `⏸️ Aguarde ${RECONNECT_RESET_TIME / 60000} minutos para nova tentativa...`);
     
-    // 🔥 CORREÇÃO #6: Reseta após tempo configurável
     setTimeout(() => {
       reconnectAttempts = 0;
       totalReconnectAttempts = 0;
@@ -425,7 +401,6 @@ async function connectWhatsApp() {
   try {
     log('INFO', `🔄 ${isReconnecting ? 'Reconectando' : 'Conectando'}... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
 
-    // Limpa socket anterior
     if (globalSock) {
       try {
         globalSock.ev.removeAllListeners();
@@ -435,7 +410,6 @@ async function connectWhatsApp() {
       globalSock = null;
     }
 
-    // Conecta MongoDB
     if (!mongoClient) {
       log('INFO', '🔗 Conectando ao MongoDB...');
       mongoClient = new MongoClient(MONGODB_URI);
@@ -443,17 +417,14 @@ async function connectWhatsApp() {
       log('SUCCESS', '✅ MongoDB conectado!');
     }
 
-    // Versão do Baileys
     const { version } = await fetchLatestBaileysVersion()
       .catch(() => ({ version: [2, 3000, 0] }));
     log('SUCCESS', `✅ Baileys v${version.join('.')}`);
 
-    // Auth state
     const db = mongoClient.db('baileys_auth');
     const collection = db.collection(SESSION_ID);
     const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
 
-    // 🔥 CORREÇÃO #4: Cria socket com timeouts aumentados
     const sock = makeWASocket({
       version,
       logger: pino({ level: 'silent' }),
@@ -475,13 +446,10 @@ async function connectWhatsApp() {
 
     globalSock = sock;
 
-    // ============================================
-    // 🔥 EVENTO: CREDENCIAIS
-    // ============================================
     sock.ev.on('creds.update', saveCreds);
 
     // ============================================
-    // 🔥 EVENTO: CONEXÃO - TOTALMENTE CORRIGIDO
+    // 🔥 EVENTO: CONEXÃO
     // ============================================
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -509,7 +477,7 @@ async function connectWhatsApp() {
           log('INFO', `🔍 Desconexão: statusCode=${statusCode}, reason=${lastDisconnect?.error?.message || 'unknown'}`);
         }
 
-        // 🔥 CASO 1: Logout - NÃO reconecta
+        // Logout - NÃO reconecta
         if (shouldLogout) {
           log('ERROR', '❌ Logout detectado - limpando credenciais');
           try {
@@ -529,11 +497,10 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CORREÇÃO #1 & #8: Erro 440 (Login Timeout) - COM LIMITE
+        // Erro 440 (Login Timeout)
         if (isLoginTimeout) {
           log('WARNING', `⚠️ Erro 440 - Login timeout (tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
           
-          // 🔥 NÃO reseta contador - mantém controle
           if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             log('ERROR', '❌ Muitos erros 440. Possível problema de rede ou conta.');
             log('INFO', '💡 Verifique: 1) Conexão de internet 2) WhatsApp não está aberto em outro dispositivo');
@@ -552,7 +519,6 @@ async function connectWhatsApp() {
           isConnecting = false;
           isReconnecting = false;
           
-          // 🔥 CORREÇÃO #2: Usa backoff exponencial
           const delay = getReconnectDelay(reconnectAttempts - 1);
           log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s antes de reconectar...`);
           
@@ -562,13 +528,13 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CASO 2: Bad Request (400) - Possível problema de auth
+        // Bad Request (400)
         if (isBadRequest) {
-          log('WARNING', '⚠️ Erro 400 - Limpando auth state...');
+          log('WARNING', '⚠️ Erro 400 - Possível problema com credenciais...');
           
           if (reconnectAttempts >= 3) {
             log('ERROR', '❌ Múltiplos erros 400. Credenciais podem estar corrompidas.');
-            log('INFO', '💡 Considere limpar o banco de dados de autenticação.');
+            log('INFO', '💡 Use o comando "clearsession" no console para limpar a sessão.');
             isConnecting = false;
             isReconnecting = false;
             return;
@@ -584,7 +550,7 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CASO 3: restartRequired - Reconexão imediata
+        // restartRequired
         if (shouldRestart) {
           log('WARNING', '⚠️ Restart necessário - reconectando...');
           
@@ -597,8 +563,6 @@ async function connectWhatsApp() {
           
           isConnecting = false;
           isReconnecting = false;
-          
-          // Restart não conta como tentativa falhada
           reconnectAttempts = Math.max(0, reconnectAttempts - 1);
           
           setTimeout(() => {
@@ -607,7 +571,7 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CASO 4: timedOut - Aguarda mais tempo
+        // timedOut
         if (isTimedOut) {
           log('WARNING', '⚠️ Timeout - aguardando...');
           isConnecting = false;
@@ -622,7 +586,7 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CASO 5: Outras desconexões - Backoff exponencial
+        // Outras desconexões
         log('WARNING', `⚠️ Conexão fechada (código ${statusCode || 'desconhecido'})`);
         isConnecting = false;
         isReconnecting = false;
@@ -647,9 +611,7 @@ async function connectWhatsApp() {
         console.log('🎉 BOT ONLINE E FUNCIONANDO!');
         console.log('🎉 └────────────────────────────────────────────┘\n');
 
-        // 🔥 CORREÇÃO #6: Agenda reset do contador após período estável
         scheduleReconnectReset();
-
         startPeriodicTasks();
         printStats();
 
@@ -660,14 +622,15 @@ async function connectWhatsApp() {
         console.log('🔧 COMANDOS NO CONSOLE:');
         console.log('   Digite "stats" para estatísticas');
         console.log('   Digite "blocked" para usuários bloqueados');
-        console.log('   Digite "users" para todos os usuários\n');
+        console.log('   Digite "users" para todos os usuários');
+        console.log('   Digite "clearsession" para limpar sessão\n');
         
         return;
       }
     });
 
     // ============================================
-    // 🔥 EVENTO: MENSAGENS
+    // 🔥 EVENTO: MENSAGENS - SEM ALTERAÇÕES
     // ============================================
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
@@ -679,7 +642,6 @@ async function connectWhatsApp() {
 
           const messageId = message.key.id;
           
-          // Anti-duplicação
           if (processedMessages.has(messageId)) {
             if (process.env.DEBUG_MODE === 'true') {
               log('INFO', '🔍 Mensagem duplicada ignorada');
@@ -688,11 +650,7 @@ async function connectWhatsApp() {
           }
           
           processedMessages.add(messageId);
-
-          // 🔥 Salva mensagem no MongoDB
           await saveMessageToDB(message);
-
-          // 🔥 Processa TODAS as mensagens (incluindo fromMe)
           await processMessage(sock, message);
 
         } catch (error) {
@@ -718,7 +676,6 @@ async function connectWhatsApp() {
       console.error(error.stack);
     }
 
-    // 🔥 CORREÇÃO #2: Reconexão com backoff
     const delay = getReconnectDelay(reconnectAttempts - 1);
     log('INFO', `⏳ Tentando novamente em ${Math.round(delay / 1000)}s...`);
     
@@ -731,7 +688,7 @@ async function connectWhatsApp() {
 }
 
 // ============================================
-// COMANDOS CONSOLE
+// COMANDOS CONSOLE - 🔥 ADICIONADO: clearsession
 // ============================================
 function setupConsoleCommands() {
   const rl = readline.createInterface({
@@ -740,7 +697,7 @@ function setupConsoleCommands() {
     prompt: ''
   });
 
-  rl.on('line', (input) => {
+  rl.on('line', async (input) => {
     const command = input.trim().toLowerCase();
 
     switch (command) {
@@ -768,15 +725,32 @@ function setupConsoleCommands() {
         totalReconnectAttempts = 0;
         log('SUCCESS', '✅ Contadores resetados!');
         break;
+      case 'clearsession':
+        log('INFO', '🗑️  Limpando sessão do MongoDB...');
+        if (mongoClient) {
+          try {
+            const db = mongoClient.db('baileys_auth');
+            await db.collection(SESSION_ID).deleteMany({});
+            log('SUCCESS', '✅ Sessão limpa com sucesso!');
+            log('INFO', '💡 Reinicie o bot para escanear novo QR Code.');
+            log('INFO', '💡 Use: Ctrl+C para encerrar, depois inicie novamente.');
+          } catch (err) {
+            log('ERROR', `❌ Erro ao limpar sessão: ${err.message}`);
+          }
+        } else {
+          log('ERROR', '❌ MongoDB não está conectado.');
+        }
+        break;
       case 'help':
         console.log('\n📋 COMANDOS DISPONÍVEIS:');
-        console.log('   stats     - Estatísticas do bot');
-        console.log('   blocked   - Usuários em atendimento manual');
-        console.log('   users     - Todos os usuários');
-        console.log('   reconnect - Força reconexão');
-        console.log('   reset     - Reseta contadores de reconexão');
-        console.log('   help      - Esta ajuda');
-        console.log('   clear     - Limpa console\n');
+        console.log('   stats        - Estatísticas do bot');
+        console.log('   blocked      - Usuários em atendimento manual');
+        console.log('   users        - Todos os usuários');
+        console.log('   reconnect    - Força reconexão');
+        console.log('   reset        - Reseta contadores de reconexão');
+        console.log('   clearsession - Limpa sessão do MongoDB (requer restart)');
+        console.log('   help         - Esta ajuda');
+        console.log('   clear        - Limpa console\n');
         break;
       case 'clear':
         console.clear();
