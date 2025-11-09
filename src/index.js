@@ -13,6 +13,8 @@ import qrcode from 'qrcode-terminal';
 import { Boom } from '@hapi/boom';
 import dotenv from 'dotenv';
 import readline from 'readline';
+// 🔧 Importações para keep-alive
+import express from 'express';
 import keepAlive from './keep-alive.js';
 import { startServer } from './server.js';
 import { validateGroqConfig } from './config/groq.js';
@@ -32,6 +34,8 @@ const BOT_NAME = process.env.BOT_NAME || 'Assistente Stream Studio';
 const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = 5000;
+// 🔧 Porta para o servidor HTTP
+const PORT = process.env.PORT || 3000;
 
 // ============================================
 // 🔥 ESTADO GLOBAL PERSISTENTE
@@ -41,6 +45,8 @@ let globalSock = null;
 let reconnectAttempts = 0;
 let isConnecting = false;
 let isInitialized = false;
+// 🔧 Instância do servidor Express
+let httpServer = null;
 
 // 🔥 CRITICAL: msgRetryCounterCache FORA do socket (previne loop)
 const msgRetryCounterCache = new NodeCache();
@@ -75,6 +81,53 @@ function showBanner() {
 }
 
 // ============================================
+// 🔧 SERVIDOR HTTP COM HEALTH CHECK
+// ============================================
+function setupHealthServer() {
+  const app = express();
+  
+  // Endpoint de health check
+  app.get('/health', (req, res) => {
+    const status = {
+      status: 'online',
+      message: '✅ Bot ativo e saudável!',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      connected: globalSock && globalSock.user ? true : false
+    };
+    res.json(status);
+  });
+  
+  // Endpoint raiz
+  app.get('/', (req, res) => {
+    res.send(`
+      <html>
+        <head>
+          <title>${BOT_NAME}</title>
+          <style>
+            body { font-family: Arial; background: #1a1a2e; color: #eee; text-align: center; padding: 50px; }
+            h1 { color: #16C79A; }
+            .status { font-size: 24px; margin: 20px; }
+          </style>
+        </head>
+        <body>
+          <h1>🤖 ${BOT_NAME}</h1>
+          <div class="status">✅ Bot Online</div>
+          <p>Powered by Baileys + Groq AI + MongoDB</p>
+        </body>
+      </html>
+    `);
+  });
+  
+  httpServer = app.listen(PORT, () => {
+    log('SUCCESS', `🌐 Servidor HTTP ativo na porta ${PORT}`);
+    log('SUCCESS', `🏥 Health check: http://localhost:${PORT}/health`);
+  });
+  
+  return httpServer;
+}
+
+// ============================================
 // INICIALIZAÇÃO ÚNICA
 // ============================================
 function initializeOnce() {
@@ -82,10 +135,21 @@ function initializeOnce() {
   
   showBanner();
   
+  // 🔧 Sempre inicia o servidor HTTP e keep-alive (não apenas no Render)
+  log('INFO', '🔧 Iniciando servidor HTTP...');
+  setupHealthServer();
+  
+  // 🔧 Inicia keep-alive para manter o bot ativo
+  log('INFO', '💓 Iniciando keep-alive...');
+  keepAlive();
+  
+  // 🔧 Se estiver no Render, também inicia o servidor adicional (se existir)
   if (process.env.RENDER === 'true') {
-    log('INFO', '🔧 Iniciando servidor HTTP...');
-    startServer();
-    keepAlive();
+    try {
+      startServer();
+    } catch (error) {
+      log('WARNING', `⚠️ Server.js não encontrado ou erro: ${error.message}`);
+    }
   }
   
   if (!validateGroqConfig()) {
@@ -507,7 +571,7 @@ async function connectWhatsApp() {
           // Anti-duplicação
           if (processedMessages.has(messageId)) {
             if (process.env.DEBUG_MODE === 'true') {
-              log('INFO', '📍 Mensagem duplicada ignorada');
+              log('INFO', '🔍 Mensagem duplicada ignorada');
             }
             continue;
           }
@@ -629,6 +693,12 @@ const shutdown = async () => {
   log('INFO', '🛑 Bot encerrado');
 
   if (cleanupInterval) clearInterval(cleanupInterval);
+  // 🔧 Fecha servidor HTTP
+  if (httpServer) {
+    httpServer.close(() => {
+      log('INFO', '🌐 Servidor HTTP encerrado');
+    });
+  }
   if (mongoClient) await mongoClient.close();
   
   process.exit(0);
