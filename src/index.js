@@ -16,8 +16,6 @@ import readline from 'readline';
 // 🔧 Importações para keep-alive
 import express from 'express';
 import keepAlive from './keep-alive.js';
-// 🔧 Removido import de startServer (conflita com setupHealthServer)
-// import { startServer } from './server.js';
 import { validateGroqConfig } from './config/groq.js';
 import { log } from './utils/helpers.js';
 import { printStats, cleanExpiredBlocks } from './services/database.js';
@@ -35,7 +33,6 @@ const BOT_NAME = process.env.BOT_NAME || 'Assistente Stream Studio';
 const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = 5000;
-// 🔧 Porta para o servidor HTTP
 const PORT = process.env.PORT || 3000;
 
 // ============================================
@@ -46,7 +43,6 @@ let globalSock = null;
 let reconnectAttempts = 0;
 let isConnecting = false;
 let isInitialized = false;
-// 🔧 Instância do servidor Express
 let httpServer = null;
 
 // 🔥 CRITICAL: msgRetryCounterCache FORA do socket (previne loop)
@@ -67,13 +63,13 @@ let cleanupInterval = null;
 // ============================================
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
   console.log('\x1b[36m%s\x1b[0m', '║                                                              ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝');
+  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════╝');
   console.log('');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot Name: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
@@ -136,16 +132,11 @@ function initializeOnce() {
   
   showBanner();
   
-  // 🔧 Sempre inicia o servidor HTTP e keep-alive (não apenas no Render)
   log('INFO', '🔧 Iniciando servidor HTTP...');
   setupHealthServer();
   
-  // 🔧 Inicia keep-alive para manter o bot ativo
-  log('INFO', '💓 Iniciando keep-alive...');
+  log('INFO', '💚 Iniciando keep-alive...');
   keepAlive();
-  
-  // 🔧 NÃO inicia startServer() - conflita com setupHealthServer()
-  // O setupHealthServer() já fornece todos os endpoints necessários
   
   if (!validateGroqConfig()) {
     console.error('\n❌ Configure GROQ_API_KEY no .env!\n');
@@ -310,7 +301,7 @@ function startPeriodicTasks() {
 export { welcomeSent };
 
 // ============================================
-// 🔥 CONEXÃO WHATSAPP - SEM LOOP INFINITO
+// 🔥 CONEXÃO WHATSAPP - CORRIGIDO
 // ============================================
 async function connectWhatsApp() {
   // Previne múltiplas conexões simultâneas
@@ -355,7 +346,6 @@ async function connectWhatsApp() {
     // Conecta MongoDB
     if (!mongoClient) {
       log('INFO', '🔗 Conectando ao MongoDB...');
-      // 🔧 Removido opções obsoletas (useNewUrlParser e useUnifiedTopology)
       mongoClient = new MongoClient(MONGODB_URI);
       await mongoClient.connect();
       log('SUCCESS', '✅ MongoDB conectado!');
@@ -378,13 +368,11 @@ async function connectWhatsApp() {
       printQRInTerminal: false,
       auth: {
         creds: state.creds,
-        // 🔥 CRITICAL: makeCacheableSignalKeyStore previne descriptografia lenta
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
       },
       browser: ['Stream Studio Bot', 'Chrome', '1.0.0'],
       markOnlineOnConnect: true,
       getMessage: getMessageFromDB,
-      // 🔥 CRITICAL: msgRetryCounterCache previne loop de descriptografia
       msgRetryCounterCache,
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
@@ -401,7 +389,7 @@ async function connectWhatsApp() {
     sock.ev.on('creds.update', saveCreds);
 
     // ============================================
-    // 🔥 EVENTO: CONEXÃO - TRATAMENTO CORRETO
+    // 🔥 EVENTO: CONEXÃO - CORRIGIDO
     // ============================================
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -419,14 +407,11 @@ async function connectWhatsApp() {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
-        // 🔥 CRITICAL: Trata TODOS os DisconnectReason corretamente
         const shouldLogout = statusCode === DisconnectReason.loggedOut;
         const shouldRestart = statusCode === DisconnectReason.restartRequired;
-        const isBadSession = statusCode === DisconnectReason.badSession;
         const isTimedOut = statusCode === DisconnectReason.timedOut;
-        const isLoginTimeout = statusCode === 440; // 🔥 Erro 440 = Login Timeout
+        const isLoginTimeout = statusCode === 440;
 
-        // LOG do motivo da desconexão
         if (process.env.DEBUG_MODE === 'true') {
           log('INFO', `🔍 Desconexão: statusCode=${statusCode}`);
         }
@@ -451,45 +436,35 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CASO 2: Erro 440 (Login Timeout) - NÃO RECONECTA
-        // Issue #502: Desconexão temporária do WhatsApp, se resolve sozinha
+        // 🔥 CASO 2: Erro 440 (Login Timeout) - RECONECTA COM LIMPEZA
         if (isLoginTimeout) {
-          log('WARNING', '⚠️ Login Timeout (440) detectado - ignorando (desconexão temporária)');
-          isConnecting = false;
-          return; // NÃO reconecta
-        }
-
-        // CASO 3: restartRequired - Reconecta com delay adequado
-        if (shouldRestart) {
-          log('WARNING', '⚠️ Restart necessário - reconectando...');
+          log('WARNING', '⚠️ Erro 440 - Limpando socket e reconectando...');
           
-          // 🔥 CORREÇÃO: Limpa socket anterior antes de reconectar
           if (globalSock) {
             try {
               globalSock.end();
-            } catch (e) {
-              // Ignora erros de limpeza
-            }
+            } catch (e) { /* ignore */ }
             globalSock = null;
           }
           
           isConnecting = false;
           reconnectAttempts = 0;
           
-          // 🔥 CORREÇÃO: Aguarda 5s para WhatsApp processar desconexão anterior
           setTimeout(() => {
             connectWhatsApp();
-          }, 5000); // Aumentado de 1s para 5s
+          }, 3000);
           return;
         }
 
-        // CASO 4: badSession - Limpa credenciais e reconecta
-        if (isBadSession) {
-          log('WARNING', '⚠️ Sessão inválida - limpando e reconectando...');
-          try {
-            await clearAll();
-          } catch (e) {
-            log('ERROR', `❌ Erro ao limpar sessão: ${e.message}`);
+        // CASO 3: restartRequired - Reconecta com delay adequado
+        if (shouldRestart) {
+          log('WARNING', '⚠️ Restart necessário - reconectando...');
+          
+          if (globalSock) {
+            try {
+              globalSock.end();
+            } catch (e) { /* ignore */ }
+            globalSock = null;
           }
           
           isConnecting = false;
@@ -497,11 +472,11 @@ async function connectWhatsApp() {
           
           setTimeout(() => {
             connectWhatsApp();
-          }, 2000);
+          }, 5000);
           return;
         }
 
-        // CASO 5: timedOut - Aguarda mais tempo
+        // CASO 4: timedOut - Aguarda mais tempo
         if (isTimedOut) {
           log('WARNING', '⚠️ Timeout - aguardando...');
           isConnecting = false;
@@ -512,7 +487,7 @@ async function connectWhatsApp() {
           return;
         }
 
-        // CASO 6: Outras desconexões - Reconexão com delay padrão
+        // CASO 5: Outras desconexões - Reconexão com delay padrão
         log('WARNING', `⚠️ Conexão fechada (código ${statusCode || 'desconhecido'}) - reconectando...`);
         isConnecting = false;
         
@@ -686,7 +661,6 @@ const shutdown = async () => {
   log('INFO', '🛑 Bot encerrado');
 
   if (cleanupInterval) clearInterval(cleanupInterval);
-  // 🔧 Fecha servidor HTTP
   if (httpServer) {
     httpServer.close(() => {
       log('INFO', '🌐 Servidor HTTP encerrado');

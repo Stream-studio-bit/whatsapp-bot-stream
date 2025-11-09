@@ -23,8 +23,8 @@ function keepAlive() {
   const ping = () => {
     const url = RENDER_URL + '/health';
     
-    // 🔥 CORREÇÃO: Adiciona timeout de 10 segundos
-    const req = https.get(url, { timeout: 10000 }, (res) => {
+    // 🔥 CORREÇÃO: Adiciona timeout de 5 segundos
+    const req = https.get(url, { timeout: 5000 }, (res) => {
       console.log(`✅ Keep-alive ping: ${res.statusCode} - ${new Date().toLocaleTimeString()}`);
     });
     
