@@ -19,8 +19,7 @@ import {
   isBotBlockedForUser,
   blockBotForUser,
   unblockBotForUser,
-  saveConversationHistory,
-  getBlockTimestamp
+  saveConversationHistory
 } from '../services/database.js';
 
 import {
@@ -36,11 +35,10 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
-// ⏰ CONFIGURAÇÃO: Tempo de bloqueio automático (em minutos, padrão 60)
-const AUTO_UNBLOCK_TIME_MINUTES = parseInt(process.env.AUTO_UNBLOCK_TIME || "60", 10);
-const AUTO_UNBLOCK_TIME = AUTO_UNBLOCK_TIME_MINUTES * 60 * 1000; // converte para milissegundos
-
+// 🔥 Armazena timestamp de inicialização
 const BOT_START_TIME = Date.now();
+
+// 🔥 Set para rastrear mensagens já processadas
 const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 1000;
 
@@ -54,6 +52,7 @@ function cleanupDebounceMap() {
     }
   }
   
+  // 🔥 Limpa cache de mensagens processadas
   if (processedMessages.size > MAX_PROCESSED_CACHE) {
     processedMessages.clear();
     log('INFO', '🧹 Cache de mensagens processadas limpo');
@@ -62,18 +61,25 @@ function cleanupDebounceMap() {
 
 setInterval(cleanupDebounceMap, 120000);
 
+/**
+ * 🔥 Verifica se a mensagem é RECENTE (depois do bot iniciar)
+ */
 function isRecentMessage(message) {
   try {
     const messageTimestamp = message.messageTimestamp;
     
     if (!messageTimestamp) {
+      // Sem timestamp = assume recente (melhor processar do que perder)
       return true;
     }
     
+    // Converte timestamp (pode estar em segundos ou milissegundos)
     let messageTime;
     if (typeof messageTimestamp === 'object' && messageTimestamp.low) {
+      // Timestamp em formato objeto (Baileys)
       messageTime = messageTimestamp.low * 1000;
     } else if (typeof messageTimestamp === 'number') {
+      // Se o número é muito pequeno, está em segundos
       messageTime = messageTimestamp < 10000000000 
         ? messageTimestamp * 1000 
         : messageTimestamp;
@@ -81,6 +87,7 @@ function isRecentMessage(message) {
       return true;
     }
     
+    // 🔥 Mensagens DEPOIS do bot iniciar (mais recentes que BOT_START_TIME)
     const isRecent = messageTime >= BOT_START_TIME;
     
     if (process.env.DEBUG_MODE === 'true') {
@@ -92,6 +99,7 @@ function isRecentMessage(message) {
     return isRecent;
     
   } catch (error) {
+    // Em caso de erro, assume que é recente para não perder mensagens
     if (process.env.DEBUG_MODE === 'true') {
       log('WARNING', `⚠️ Erro ao verificar idade da mensagem: ${error.message}`);
     }
@@ -99,14 +107,19 @@ function isRecentMessage(message) {
   }
 }
 
+/**
+ * 🔥 Valida se mensagem deve ser processada
+ */
 function shouldProcessMessage(message) {
   try {
+    // 1. Valida estrutura básica
     if (!message || !message.key) {
       return false;
     }
     
     const jid = message.key.remoteJid;
     
+    // 2. Ignora mensagens de broadcast/status
     if (jid === 'status@broadcast' || jid?.includes('broadcast')) {
       if (process.env.DEBUG_MODE === 'true') {
         log('INFO', '⏭️ Ignorando mensagem de broadcast');
@@ -114,6 +127,7 @@ function shouldProcessMessage(message) {
       return false;
     }
     
+    // 3. Ignora grupos (apenas conversas individuais)
     if (jid?.endsWith('@g.us')) {
       if (process.env.DEBUG_MODE === 'true') {
         log('INFO', '⏭️ Ignorando mensagem de grupo');
@@ -121,10 +135,12 @@ function shouldProcessMessage(message) {
       return false;
     }
     
+    // 4. Verifica se é mensagem individual válida
     if (!jid?.endsWith('@s.whatsapp.net')) {
       return false;
     }
     
+    // 5. Verifica se já foi processada
     const messageId = message.key.id;
     if (messageId && processedMessages.has(messageId)) {
       if (process.env.DEBUG_MODE === 'true') {
@@ -133,6 +149,7 @@ function shouldProcessMessage(message) {
       return false;
     }
     
+    // 6. 🔥 Verifica se é mensagem RECENTE
     if (!isRecentMessage(message)) {
       if (process.env.DEBUG_MODE === 'true') {
         log('INFO', '⏭️ Ignorando mensagem antiga (anterior à inicialização)');
@@ -149,65 +166,16 @@ function shouldProcessMessage(message) {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Verifica e desbloqueia automaticamente se expirou
- */
-async function checkAndAutoUnblock(jid) {
-  try {
-    const isBlocked = await isBotBlockedForUser(jid);
-    
-    if (!isBlocked) {
-      return false; // Não está bloqueado
-    }
-    
-    // Obtém timestamp do bloqueio
-    const blockTimestamp = await getBlockTimestamp(jid);
-    
-    if (!blockTimestamp) {
-      // Sem timestamp = bloqueio antigo, desbloqueia
-      await unblockBotForUser(jid);
-      const phone = extractPhoneNumber(jid);
-      log('SUCCESS', `🔓 AUTO-DESBLOQUEIO: ${phone} (sem timestamp)`);
-      return false;
-    }
-    
-    const now = Date.now();
-    const timeSinceBlock = now - blockTimestamp;
-    
-    // Se passou mais que o tempo configurado, desbloqueia
-    if (timeSinceBlock > AUTO_UNBLOCK_TIME) {
-      await unblockBotForUser(jid);
-      const phone = extractPhoneNumber(jid);
-      const hoursBlocked = (timeSinceBlock / (60 * 60 * 1000)).toFixed(1);
-      log('SUCCESS', `🔓 AUTO-DESBLOQUEIO: ${phone} (bloqueado por ${hoursBlocked}h)`);
-      return false;
-    }
-    
-    // Ainda bloqueado
-    const remainingTime = AUTO_UNBLOCK_TIME - timeSinceBlock;
-    const remainingMinutes = Math.ceil(remainingTime / (60 * 1000));
-    
-    if (process.env.DEBUG_MODE === 'true') {
-      const phone = extractPhoneNumber(jid);
-      log('INFO', `🔒 ${phone} ainda bloqueado (${remainingMinutes}min restantes)`);
-    }
-    
-    return true;
-    
-  } catch (error) {
-    log('WARNING', `⚠️ Erro ao verificar auto-desbloqueio: ${error.message}`);
-    return false; // Em caso de erro, não bloqueia
-  }
-}
-
-/**
- * 🔥 HANDLER PRINCIPAL - VERSÃO COM AUTO-DESBLOQUEIO
+ * 🔥 HANDLER PRINCIPAL - VERSÃO COMPATÍVEL COM DATABASE.JS
  */
 export async function handleIncomingMessage(sock, message) {
   try {
+    // 🔥 VALIDAÇÃO 0: Verifica se deve processar
     if (!shouldProcessMessage(message)) {
       return;
     }
     
+    // 🔥 VALIDAÇÃO 1: Mensagem válida (conteúdo)
     if (!isValidMessage(message)) {
       return;
     }
@@ -219,16 +187,19 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
     
+    // Marca como processada
     const messageId = message.key.id;
     if (messageId) {
       processedMessages.add(messageId);
     }
 
-    // 🔥 BLOQUEIO OWNER (somente mensagens recentes)
+    // 🔥 BLOQUEIO APENAS PARA MENSAGENS RECENTES DO OWNER
     if (message?.key?.fromMe) {
       const clientPhone = extractPhoneNumber(jid);
       
+      // 🔥 SÓ bloqueia se mensagem for RECENTE
       if (isRecentMessage(message)) {
+        // Verifica se já está bloqueado para evitar bloqueios duplicados
         const isAlreadyBlocked = await isBotBlockedForUser(jid);
         
         if (!isAlreadyBlocked) {
@@ -246,21 +217,32 @@ export async function handleIncomingMessage(sock, message) {
           }
         }
       } else {
+        // 🔥 Mensagem antiga do owner - IGNORA completamente
         if (process.env.DEBUG_MODE === 'true') {
           log('INFO', `⏭️ Ignorando mensagem ANTIGA do owner para ${clientPhone} (histórico)`);
         }
       }
       
-      return;
+      return; // Para processamento (owner respondeu ou histórico)
     }
 
-    // 🔥 VERIFICAÇÃO DE BLOQUEIO COM AUTO-DESBLOQUEIO
-    const isStillBlocked = await checkAndAutoUnblock(jid);
+    // 🔥 VERIFICAÇÃO DE BLOQUEIO COM AUTO-DESBLOQUEIO INTEGRADO
+    // A função isBotBlockedForUser() do database.js JÁ FAZ:
+    // 1. Verifica se está bloqueado
+    // 2. Verifica se expirou (> 60 minutos)
+    // 3. Desbloqueia automaticamente se expirou
+    let isBlocked = false;
+    try {
+      isBlocked = await isBotBlockedForUser(jid);
+    } catch (err) {
+      log('WARNING', `⚠️ Erro ao verificar bloqueio: ${err.message}`);
+      isBlocked = false;
+    }
 
-    if (isStillBlocked) {
+    if (isBlocked) {
       const clientPhone = extractPhoneNumber(jid);
       log('WARNING', `🚫 MENSAGEM IGNORADA - Bot bloqueado para ${clientPhone} (Owner em atendimento)`);
-      return;
+      return; // 🔥 PARA AQUI - NÃO PROCESSA NADA
     }
 
     // Debounce
@@ -277,7 +259,7 @@ export async function handleIncomingMessage(sock, message) {
     
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}${cleanedMessage.length > 50 ? '...' : ''}"`);
 
-    // PRIMEIRA INTERAÇÃO = SEMPRE LEAD
+    // 🔥 PASSO 1: Verifica se é primeira interação
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -288,6 +270,7 @@ export async function handleIncomingMessage(sock, message) {
     
     const isFirstContact = !userExists;
     
+    // 🔥 PRIMEIRA MENSAGEM = SEMPRE LEAD
     if (isFirstContact) {
       const hasLeadKeywords = isNewLead(cleanedMessage);
       
@@ -311,6 +294,7 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao enviar mensagem: ${err.message}`);
       });
       
+      // Registra no histórico
       try {
         addToHistory(phone, 'user', cleanedMessage);
         addToHistory(phone, 'assistant', welcomeMsg);
@@ -319,6 +303,7 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao salvar histórico da IA: ${err.message}`);
       }
       
+      // Salva no banco
       try {
         await saveConversationHistory(jid, [
           { role: 'user', content: cleanedMessage },
@@ -332,7 +317,7 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // MENSAGENS SEGUINTES
+    // 🔥 MENSAGENS SEGUINTES
     log('INFO', `📨 Mensagem de ${pushName}`);
     
     await saveUser(jid, { name: pushName });
@@ -369,11 +354,13 @@ export async function handleIncomingMessage(sock, message) {
     } catch (error) {
       log('WARNING', `⚠️ Erro ao gerar resposta da IA: ${error.message}`);
       
+      // Envia mensagem de erro ao usuário
       const errorMsg = `Desculpe ${pushName}, estou com dificuldades técnicas no momento. 😅\n\nPor favor, aguarde que logo você será atendido!`;
       await sock.sendMessage(jid, { text: errorMsg }).catch(() => {});
     }
 
   } catch (error) {
+    // Log de erro sem expor detalhes sensíveis
     if (!error.message?.includes('Connection') && !error.message?.includes('Stream')) {
       log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
       if (process.env.DEBUG_MODE === 'true') {
@@ -393,17 +380,22 @@ export async function processMessage(sock, message) {
   }
 }
 
+/**
+ * 🔥 Reseta o cache de mensagens processadas
+ */
 export function resetProcessedMessages() {
   processedMessages.clear();
   log('SUCCESS', '✅ Cache de mensagens processadas resetado');
 }
 
+/**
+ * 🔥 Obtém estatísticas do handler
+ */
 export function getHandlerStats() {
   return {
     botStartTime: new Date(BOT_START_TIME).toISOString(),
     processedMessagesCount: processedMessages.size,
-    debounceCacheSize: lastMessageTime.size,
-    autoUnblockTime: `${AUTO_UNBLOCK_TIME_MINUTES} minutos`
+    debounceCacheSize: lastMessageTime.size
   };
 }
 
