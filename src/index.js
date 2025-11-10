@@ -373,28 +373,32 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 FIX CRÍTICO: Erro 440 - Limpa sessão IMEDIATAMENTE
+        // 🔥 FIX CRÍTICO: Erro 440 - COMPORTAMENTO NORMAL após QR scan
         if (isLoginTimeout) {
           consecutive440Errors++;
-          log('WARNING', `⚠️ Erro 440 (${consecutive440Errors}/${MAX_440_BEFORE_CLEAR})`);
+          log('INFO', `📲 Erro 440 (${consecutive440Errors}/${MAX_440_BEFORE_CLEAR}) - Desconexão pós-QR (normal)`);
           
-          // 🔥 LIMPA AGORA (não na próxima tentativa)
+          // 🔥 APENAS limpa se for erro recorrente (credenciais corrompidas)
           if (consecutive440Errors >= MAX_440_BEFORE_CLEAR) {
-            log('ERROR', '❌ Credenciais corrompidas! Limpando sessão...');
+            log('ERROR', '❌ Múltiplos erros 440! Credenciais podem estar corrompidas.');
+            log('WARNING', '🧹 Limpando sessão automaticamente...');
             try {
               await clearAll();
               consecutive440Errors = 0;
+              reconnectAttempts = 0;
               log('SUCCESS', '✅ Sessão limpa! Escaneie novo QR Code.');
             } catch (e) {
               log('ERROR', `❌ Erro ao limpar: ${e.message}`);
             }
           }
           
+          // 🔥 CRÍTICO: Destrói socket COMPLETAMENTE antes de reconectar
           destroySocket();
           isConnecting = false;
           
-          const delay = getReconnectDelay(reconnectAttempts - 1);
-          log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s`);
+          // 🔥 Reconexão IMEDIATA para primeiro erro 440 (comportamento normal)
+          const delay = consecutive440Errors === 1 ? 1000 : getReconnectDelay(reconnectAttempts - 1);
+          log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s para reconectar...`);
           
           setTimeout(() => {
             connectWhatsApp();
