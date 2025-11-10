@@ -38,26 +38,25 @@ const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000;
 const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
 const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
-// 🔥 FIX CRÍTICO: Contador separado POR SESSÃO
+// 🔥 FIX: Limite de erros 440 antes de limpar sessão
 const MAX_440_BEFORE_CLEAR = 2;
 
 let mongoClient = null;
 let globalSock = null;
 let reconnectAttempts = 0;
-let consecutive440Errors = 0; // 🔥 NOVO: Contador que NÃO reseta ao "conectar"
+let consecutive440Errors = 0;
 let isConnecting = false;
 let isInitialized = false;
 let httpServer = null;
 let lastReconnectTime = 0;
 let totalReconnectAttempts = 0;
-let lastConnectionState = null; // 🔥 NOVO: Rastreia último estado
+let authenticationTimeout = null; // 🔥 NOVO: Timeout de autenticação
 
 const msgRetryCounterCache = new NodeCache();
 const processedMessages = new Set();
 const MESSAGE_CACHE_LIMIT = 1000;
 
 let cleanupInterval = null;
-let authStateManager = null; // 🔥 NOVO: Gerenciador global de auth
 
 function getReconnectDelay(attempt) {
   const delay = Math.min(
@@ -79,10 +78,10 @@ function scheduleReconnectReset() {
 
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔═══════════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════════════╝\n');
+  console.log('\x1b[36m%s\x1b[0m', '╚═══════════════════════════════════════════════════════════╝\n');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `🌐 Platform: ${process.env.RENDER ? 'Render' : process.env.FLY_APP_NAME ? 'Fly.io' : 'Local'}\n`);
@@ -254,6 +253,12 @@ function destroySocket() {
     } catch (e) { /* ignore */ }
     globalSock = null;
   }
+  
+  // 🔥 NOVO: Limpa timeout de autenticação
+  if (authenticationTimeout) {
+    clearTimeout(authenticationTimeout);
+    authenticationTimeout = null;
+  }
 }
 
 async function connectWhatsApp() {
@@ -304,20 +309,7 @@ async function connectWhatsApp() {
     const db = mongoClient.db('baileys_auth');
     const collection = db.collection(SESSION_ID);
     
-    // 🔥 FIX CRÍTICO: Se já teve muitos erros 440, limpa ANTES de conectar
-    if (consecutive440Errors >= MAX_440_BEFORE_CLEAR) {
-      log('WARNING', '🧹 Muitos erros 440! Limpando sessão automaticamente...');
-      try {
-        await collection.deleteMany({});
-        log('SUCCESS', '✅ Sessão limpa! Nova autenticação necessária.');
-        consecutive440Errors = 0;
-      } catch (e) {
-        log('ERROR', `❌ Erro ao limpar: ${e.message}`);
-      }
-    }
-    
     const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
-    authStateManager = { clearAll }; // Salva referência global
 
     const sock = makeWASocket({
       version,
@@ -381,14 +373,21 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 FIX CRÍTICO: Erro 440 - incrementa E reconecta
+        // 🔥 FIX CRÍTICO: Erro 440 - Limpa sessão IMEDIATAMENTE
         if (isLoginTimeout) {
           consecutive440Errors++;
           log('WARNING', `⚠️ Erro 440 (${consecutive440Errors}/${MAX_440_BEFORE_CLEAR})`);
           
-          // Se atingiu limite, será limpado na PRÓXIMA tentativa de conexão
+          // 🔥 LIMPA AGORA (não na próxima tentativa)
           if (consecutive440Errors >= MAX_440_BEFORE_CLEAR) {
-            log('ERROR', '❌ Credenciais corrompidas! Será limpo ao reconectar.');
+            log('ERROR', '❌ Credenciais corrompidas! Limpando sessão...');
+            try {
+              await clearAll();
+              consecutive440Errors = 0;
+              log('SUCCESS', '✅ Sessão limpa! Escaneie novo QR Code.');
+            } catch (e) {
+              log('ERROR', `❌ Erro ao limpar: ${e.message}`);
+            }
           }
           
           destroySocket();
@@ -418,12 +417,17 @@ async function connectWhatsApp() {
 
       if (connection === 'open') {
         isConnecting = false;
-        lastConnectionState = 'open';
         
-        // 🔥 FIX: Só reseta 440 se autenticou COM SUCESSO (tem user)
+        // 🔥 FIX CRÍTICO: SÓ reseta contadores se AUTENTICADO (tem user)
         if (sock.user) {
+          // 🔥 Limpa timeout de autenticação (se existir)
+          if (authenticationTimeout) {
+            clearTimeout(authenticationTimeout);
+            authenticationTimeout = null;
+          }
+          
           reconnectAttempts = 0;
-          consecutive440Errors = 0; // Reset SOMENTE com autenticação válida
+          consecutive440Errors = 0;
           
           log('SUCCESS', '✅ Conectado E AUTENTICADO ao WhatsApp!');
           console.log('\n🎉 ┌────────────────────────────────────────────┐');
@@ -440,9 +444,19 @@ async function connectWhatsApp() {
           
           console.log('🔧 CONSOLE:');
           console.log('   stats | blocked | users | clearsession\n');
+          
         } else {
-          log('WARNING', '⚠️ Conectado mas SEM autenticação (aguardando QR scan)');
-          isConnecting = false;
+          // 🔥 NOVO: Aguarda autenticação completar (timeout de 30s)
+          log('INFO', '⏳ Aguardando autenticação completar (QR Code escaneado)...');
+          
+          authenticationTimeout = setTimeout(() => {
+            if (!sock.user) {
+              log('WARNING', '⚠️ Timeout de autenticação - reconectando...');
+              destroySocket();
+              isConnecting = false;
+              connectWhatsApp();
+            }
+          }, 30000); // 30 segundos
         }
         
         return;
@@ -451,7 +465,14 @@ async function connectWhatsApp() {
 
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
-      if (type !== 'notify') return;
+      
+      // 🔥 FIX CRÍTICO: Ignora mensagens históricas (append)
+      if (type !== 'notify') {
+        if (process.env.DEBUG_MODE === 'true') {
+          log('INFO', '⏭️ Ignorando mensagens históricas (append)');
+        }
+        return;
+      }
 
       for (const message of messages) {
         try {
@@ -580,6 +601,7 @@ process.on('uncaughtException', (err) => {
 const shutdown = async () => {
   console.log('\n\n👋 Encerrando...');
   if (cleanupInterval) clearInterval(cleanupInterval);
+  if (authenticationTimeout) clearTimeout(authenticationTimeout);
   if (httpServer) httpServer.close();
   if (mongoClient) await mongoClient.close();
   process.exit(0);

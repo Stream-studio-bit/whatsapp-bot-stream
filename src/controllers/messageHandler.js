@@ -37,7 +37,6 @@ const DEBOUNCE_DELAY = 500;
 
 // 🔥 NOVO: Armazena timestamp de inicialização
 const BOT_START_TIME = Date.now();
-const MESSAGE_AGE_THRESHOLD = 10000; // 10 segundos
 
 // 🔥 NOVO: Set para rastrear mensagens já processadas
 const processedMessages = new Set();
@@ -53,7 +52,7 @@ function cleanupDebounceMap() {
     }
   }
   
-  // 🔥 NOVO: Limpa cache de mensagens processadas
+  // 🔥 Limpa cache de mensagens processadas
   if (processedMessages.size > MAX_PROCESSED_CACHE) {
     processedMessages.clear();
     log('INFO', '🧹 Cache de mensagens processadas limpo');
@@ -63,15 +62,14 @@ function cleanupDebounceMap() {
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 NOVA FUNÇÃO: Verifica se a mensagem é recente o suficiente
+ * 🔥 CORREÇÃO CRÍTICA: Verifica se a mensagem é RECENTE (depois do bot iniciar)
  */
 function isRecentMessage(message) {
   try {
-    // Verifica se a mensagem tem timestamp
     const messageTimestamp = message.messageTimestamp;
     
     if (!messageTimestamp) {
-      // Se não tem timestamp, assume que é recente
+      // Sem timestamp = assume recente (melhor processar do que perder)
       return true;
     }
     
@@ -89,11 +87,16 @@ function isRecentMessage(message) {
       return true;
     }
     
-    const now = Date.now();
-    const messageAge = now - messageTime;
+    // 🔥 CORREÇÃO: Mensagens DEPOIS do bot iniciar (mais recentes que BOT_START_TIME)
+    const isRecent = messageTime >= BOT_START_TIME;
     
-    // Aceita mensagens até MESSAGE_AGE_THRESHOLD ms antes do bot iniciar
-    return messageAge <= (now - BOT_START_TIME + MESSAGE_AGE_THRESHOLD);
+    if (process.env.DEBUG_MODE === 'true') {
+      const messageDate = new Date(messageTime).toISOString();
+      const botStartDate = new Date(BOT_START_TIME).toISOString();
+      log('INFO', `📅 Mensagem: ${messageDate} | Bot: ${botStartDate} | Recente: ${isRecent}`);
+    }
+    
+    return isRecent;
     
   } catch (error) {
     // Em caso de erro, assume que é recente para não perder mensagens
@@ -105,7 +108,7 @@ function isRecentMessage(message) {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Verifica se mensagem é válida para processamento
+ * 🔥 CORREÇÃO: Valida se mensagem deve ser processada
  */
 function shouldProcessMessage(message) {
   try {
@@ -146,7 +149,7 @@ function shouldProcessMessage(message) {
       return false;
     }
     
-    // 6. Verifica se é mensagem recente
+    // 6. 🔥 CORREÇÃO: Verifica se é mensagem RECENTE
     if (!isRecentMessage(message)) {
       if (process.env.DEBUG_MODE === 'true') {
         log('INFO', '⏭️ Ignorando mensagem antiga (anterior à inicialização)');
@@ -190,29 +193,40 @@ export async function handleIncomingMessage(sock, message) {
       processedMessages.add(messageId);
     }
 
-    // 🔥 CORREÇÃO PRINCIPAL: BLOQUEIO AUTOMÁTICO
-    // Apenas para mensagens RECENTES do owner
+    // 🔥 CORREÇÃO CRÍTICA: BLOQUEIO APENAS PARA MENSAGENS RECENTES DO OWNER
     if (message?.key?.fromMe) {
       const clientPhone = extractPhoneNumber(jid);
       
-      // Verifica se já está bloqueado para evitar bloqueios duplicados
-      const isAlreadyBlocked = await isBotBlockedForUser(jid);
-      
-      if (!isAlreadyBlocked) {
-        log('INFO', `👤 Owner enviou mensagem para ${clientPhone} - Bloqueando IA`);
+      // 🔥 NOVA VALIDAÇÃO: Só bloqueia se mensagem for RECENTE
+      if (isRecentMessage(message)) {
+        // Verifica se já está bloqueado para evitar bloqueios duplicados
+        const isAlreadyBlocked = await isBotBlockedForUser(jid);
         
-        try {
-          await blockBotForUser(jid);
-          log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu atendimento`);
-        } catch (err) {
-          log('WARNING', `⚠️ Erro ao bloquear IA: ${err.message}`);
+        if (!isAlreadyBlocked) {
+          log('INFO', `👤 Owner enviou mensagem RECENTE para ${clientPhone} - Bloqueando IA`);
+          
+          try {
+            await blockBotForUser(jid);
+            log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu atendimento`);
+          } catch (err) {
+            log('WARNING', `⚠️ Erro ao bloquear IA: ${err.message}`);
+          }
+        } else {
+          if (process.env.DEBUG_MODE === 'true') {
+            log('INFO', `ℹ️ IA já estava bloqueada para ${clientPhone}`);
+          }
+        }
+      } else {
+        // 🔥 Mensagem antiga do owner - IGNORA completamente
+        if (process.env.DEBUG_MODE === 'true') {
+          log('INFO', `⏭️ Ignorando mensagem ANTIGA do owner para ${clientPhone} (histórico)`);
         }
       }
       
-      return; // Para processamento (owner já respondeu)
+      return; // Para processamento (owner respondeu ou histórico)
     }
 
-    // 🔥 VERIFICAÇÃO DE BLOQUEIO
+    // 🔥 VERIFICAÇÃO DE BLOQUEIO (para mensagens de clientes)
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
@@ -223,7 +237,7 @@ export async function handleIncomingMessage(sock, message) {
 
     if (isBlocked) {
       const clientPhone = extractPhoneNumber(jid);
-      log('WARNING', `🚫 MENSAGEM IGNORADA - Bot bloqueado para ${clientPhone}`);
+      log('WARNING', `🚫 MENSAGEM IGNORADA - Bot bloqueado para ${clientPhone} (Owner em atendimento)`);
       return; // 🔥 PARA AQUI - NÃO PROCESSA NADA
     }
 
@@ -377,8 +391,7 @@ export function getHandlerStats() {
   return {
     botStartTime: new Date(BOT_START_TIME).toISOString(),
     processedMessagesCount: processedMessages.size,
-    debounceCacheSize: lastMessageTime.size,
-    messageAgeThreshold: `${MESSAGE_AGE_THRESHOLD}ms`
+    debounceCacheSize: lastMessageTime.size
   };
 }
 
