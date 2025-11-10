@@ -23,29 +23,21 @@ import { showStats, listBlockedUsers, listAllUsers } from './controllers/command
 
 dotenv.config();
 
-// ============================================
-// 🔧 CONFIGURAÇÕES
-// ============================================
 const MONGODB_URI = process.env.MONGODB_URI;
 const SESSION_ID = process.env.SESSION_ID || 'stream-studio-bot';
 const BOT_NAME = process.env.BOT_NAME || 'Assistente Stream Studio';
 const OWNER_NAME = process.env.OWNER_NAME || 'Roberto';
 const PORT = process.env.PORT || 3000;
 
-// Configurações de reconexão
 const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.MAX_RECONNECT_ATTEMPTS) || 5;
 const INITIAL_RECONNECT_DELAY = parseInt(process.env.INITIAL_RECONNECT_DELAY) || 5000;
 const MAX_RECONNECT_DELAY = parseInt(process.env.MAX_RECONNECT_DELAY) || 300000;
 const RECONNECT_RESET_TIME = parseInt(process.env.RECONNECT_RESET_TIME) || 900000;
 
-// Timeouts
 const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000;
 const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
 const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
-// ============================================
-// 🔥 ESTADO GLOBAL
-// ============================================
 let mongoClient = null;
 let globalSock = null;
 let reconnectAttempts = 0;
@@ -56,19 +48,18 @@ let httpServer = null;
 let lastReconnectTime = 0;
 let totalReconnectAttempts = 0;
 
-// 🔥 CRITICAL: msgRetryCounterCache FORA do socket
+// 🔥 FIX #1: msgRetryCounterCache FORA do socket
 const msgRetryCounterCache = new NodeCache();
 
-// Cache de mensagens processadas
 const processedMessages = new Set();
 const MESSAGE_CACHE_LIMIT = 1000;
 
-// Cleanup interval
 let cleanupInterval = null;
 
-// ============================================
-// 🔥 FUNÇÕES AUXILIARES
-// ============================================
+// 🔥 FIX #2: Controle de autenticação separado
+let waitingForQRScan = false;
+let qrCodeShown = false;
+
 function getReconnectDelay(attempt) {
   const delay = Math.min(
     INITIAL_RECONNECT_DELAY * Math.pow(2, attempt),
@@ -86,9 +77,6 @@ function scheduleReconnectReset() {
   }, RECONNECT_RESET_TIME);
 }
 
-// ============================================
-// BANNER
-// ============================================
 function showBanner() {
   console.clear();
   console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════════════╗');
@@ -106,9 +94,6 @@ function showBanner() {
   console.log('');
 }
 
-// ============================================
-// 🔥 SERVIDOR HTTP
-// ============================================
 function setupHealthServer() {
   if (httpServer) {
     log('WARNING', '⚠️  Servidor HTTP já está rodando');
@@ -128,7 +113,8 @@ function setupHealthServer() {
         connected: globalSock && globalSock.user ? true : false,
         reconnectAttempts: reconnectAttempts,
         totalReconnectAttempts: totalReconnectAttempts,
-        isReconnecting: isReconnecting
+        isReconnecting: isReconnecting,
+        waitingForQRScan: waitingForQRScan
       },
       memory: {
         used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
@@ -156,7 +142,7 @@ function setupHealthServer() {
           <div class="info">
             <p><strong>Platform:</strong> ${process.env.RENDER ? 'Render' : process.env.FLY_APP_NAME ? 'Fly.io' : 'Local'}</p>
             <p><strong>Uptime:</strong> ${Math.floor(process.uptime() / 60)} minutos</p>
-            <p><strong>WhatsApp:</strong> ${globalSock && globalSock.user ? '🟢 Conectado' : '🔴 Desconectado'}</p>
+            <p><strong>WhatsApp:</strong> ${globalSock && globalSock.user ? '🟢 Conectado' : waitingForQRScan ? '🟡 Aguardando QR Code' : '🔴 Desconectado'}</p>
           </div>
           <p>Powered by Baileys + Groq AI + MongoDB</p>
         </body>
@@ -174,7 +160,8 @@ function setupHealthServer() {
         reconnectAttempts: reconnectAttempts,
         totalReconnectAttempts: totalReconnectAttempts,
         isReconnecting: isReconnecting,
-        lastReconnect: lastReconnectTime ? new Date(lastReconnectTime).toISOString() : null
+        lastReconnect: lastReconnectTime ? new Date(lastReconnectTime).toISOString() : null,
+        waitingForQRScan: waitingForQRScan
       },
       system: {
         uptime: process.uptime(),
@@ -187,7 +174,7 @@ function setupHealthServer() {
   
   httpServer = app.listen(PORT, '0.0.0.0', () => {
     log('SUCCESS', `🌐 Servidor HTTP ativo na porta ${PORT}`);
-    log('SUCCESS', `🏥 Health check: http://localhost:${PORT}/health`);
+    log('SUCCESS', `🩺 Health check: http://localhost:${PORT}/health`);
     log('SUCCESS', `📊 Status: http://localhost:${PORT}/status`);
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
@@ -203,9 +190,6 @@ function setupHealthServer() {
   return httpServer;
 }
 
-// ============================================
-// INICIALIZAÇÃO ÚNICA
-// ============================================
 function initializeOnce() {
   if (isInitialized) return;
   
@@ -231,9 +215,6 @@ function initializeOnce() {
   isInitialized = true;
 }
 
-// ============================================
-// MONGODB AUTH STATE
-// ============================================
 async function useMongoDBAuthState(collection) {
   const readCreds = async () => {
     const data = await collection.findOne({ _id: 'creds' });
@@ -292,9 +273,6 @@ async function useMongoDBAuthState(collection) {
   };
 }
 
-// ============================================
-// 🔥 getMessage
-// ============================================
 async function getMessageFromDB(key) {
   try {
     if (!mongoClient) return proto.Message.fromObject({});
@@ -316,9 +294,6 @@ async function getMessageFromDB(key) {
   }
 }
 
-// ============================================
-// 🔥 SALVA MENSAGENS NO MONGODB
-// ============================================
 async function saveMessageToDB(message) {
   try {
     if (!mongoClient || !message?.key?.id) return;
@@ -338,9 +313,6 @@ async function saveMessageToDB(message) {
   }
 }
 
-// ============================================
-// LIMPEZA PERIÓDICA
-// ============================================
 function startPeriodicTasks() {
   if (cleanupInterval) clearInterval(cleanupInterval);
   
@@ -365,23 +337,40 @@ function startPeriodicTasks() {
   log('SUCCESS', '✅ Tarefas periódicas iniciadas');
 }
 
-// ============================================
-// 🔥 CONEXÃO WHATSAPP - SEM ALTERAÇÕES CRÍTICAS
-// ============================================
+// 🔥 FIX #3: Função para destruir socket completamente
+function destroySocket() {
+  if (globalSock) {
+    try {
+      globalSock.ev.removeAllListeners();
+      globalSock.ws?.removeAllListeners?.();
+      globalSock.ws?.terminate?.();
+      globalSock.end?.();
+    } catch (e) { /* ignore */ }
+    globalSock = null;
+  }
+}
+
 async function connectWhatsApp() {
-  if (isConnecting || isReconnecting) {
-    log('WARNING', '⚠️ Conexão/reconexão já em andamento...');
+  // 🔥 FIX #4: Verificação mais robusta
+  if (isConnecting) {
+    log('WARNING', '⚠️ Conexão já em andamento...');
     return null;
   }
   
   if (globalSock && globalSock.user) {
-    log('WARNING', '⚠️ Socket já conectado - ignorando nova conexão');
+    log('WARNING', '⚠️ Socket já autenticado - ignorando nova conexão');
     return globalSock;
+  }
+  
+  // 🔥 FIX #5: NÃO reseta contador se ainda está aguardando QR Code
+  if (waitingForQRScan && qrCodeShown) {
+    log('INFO', '⏳ Aguardando escaneamento do QR Code...');
+    return null;
   }
   
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     log('ERROR', `❌ Limite de ${MAX_RECONNECT_ATTEMPTS} tentativas atingido`);
-    log('INFO', `⏸️ Aguarde ${RECONNECT_RESET_TIME / 60000} minutos para nova tentativa...`);
+    log('INFO', `⸻ Aguarde ${RECONNECT_RESET_TIME / 60000} minutos para nova tentativa...`);
     
     setTimeout(() => {
       reconnectAttempts = 0;
@@ -401,14 +390,7 @@ async function connectWhatsApp() {
   try {
     log('INFO', `🔄 ${isReconnecting ? 'Reconectando' : 'Conectando'}... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
 
-    if (globalSock) {
-      try {
-        globalSock.ev.removeAllListeners();
-        globalSock.ws?.removeAllListeners?.();
-        globalSock.ws?.terminate?.();
-      } catch (e) { /* ignore */ }
-      globalSock = null;
-    }
+    destroySocket(); // 🔥 FIX #6: Usa função melhorada
 
     if (!mongoClient) {
       log('INFO', '🔗 Conectando ao MongoDB...');
@@ -428,7 +410,7 @@ async function connectWhatsApp() {
     const sock = makeWASocket({
       version,
       logger: pino({ level: 'silent' }),
-      printQRInTerminal: false,
+      printQRInTerminal: true, // 🔥 FIX #7: HABILITADO!
       auth: {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
@@ -448,21 +430,27 @@ async function connectWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // ============================================
-    // 🔥 EVENTO: CONEXÃO
-    // ============================================
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        waitingForQRScan = true;
+        qrCodeShown = true;
         console.log('\n📱 ┌────────────────────────────────────────────┐');
         console.log('📱 ESCANEIE O QR CODE ABAIXO');
         console.log('📱 └────────────────────────────────────────────┘\n');
         qrcode.generate(qr, { small: true });
         console.log('\n📱 └────────────────────────────────────────────┘\n');
+        // 🔥 FIX #8: NÃO incrementa contador enquanto aguarda QR
+        reconnectAttempts = Math.max(0, reconnectAttempts - 1);
+        isConnecting = false;
+        return;
       }
 
       if (connection === 'close') {
+        waitingForQRScan = false;
+        qrCodeShown = false;
+        
         const statusCode = lastDisconnect?.error instanceof Boom
           ? lastDisconnect.error.output?.statusCode
           : null;
@@ -477,7 +465,6 @@ async function connectWhatsApp() {
           log('INFO', `🔍 Desconexão: statusCode=${statusCode}, reason=${lastDisconnect?.error?.message || 'unknown'}`);
         }
 
-        // Logout - NÃO reconecta
         if (shouldLogout) {
           log('ERROR', '❌ Logout detectado - limpando credenciais');
           try {
@@ -492,32 +479,24 @@ async function connectWhatsApp() {
             mongoClient = null;
           }
           
-          log('INFO', '⏸️ Bot pausado - necessário re-autenticar');
+          log('INFO', '⸻ Bot pausado - necessário re-autenticar');
           process.exit(0);
           return;
         }
 
-        // Erro 440 (Login Timeout)
+        // 🔥 FIX #9: Tratamento correto do erro 440
         if (isLoginTimeout) {
-          log('WARNING', `⚠️ Erro 440 - Login timeout (tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+          log('WARNING', `⚠️ Erro 440 - Login timeout (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
           
           if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             log('ERROR', '❌ Muitos erros 440. Possível problema de rede ou conta.');
             log('INFO', '💡 Verifique: 1) Conexão de internet 2) WhatsApp não está aberto em outro dispositivo');
             isConnecting = false;
-            isReconnecting = false;
             return;
           }
           
-          if (globalSock) {
-            try {
-              globalSock.end();
-            } catch (e) { /* ignore */ }
-            globalSock = null;
-          }
-          
+          destroySocket();
           isConnecting = false;
-          isReconnecting = false;
           
           const delay = getReconnectDelay(reconnectAttempts - 1);
           log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s antes de reconectar...`);
@@ -528,7 +507,6 @@ async function connectWhatsApp() {
           return;
         }
 
-        // Bad Request (400)
         if (isBadRequest) {
           log('WARNING', '⚠️ Erro 400 - Possível problema com credenciais...');
           
@@ -536,12 +514,11 @@ async function connectWhatsApp() {
             log('ERROR', '❌ Múltiplos erros 400. Credenciais podem estar corrompidas.');
             log('INFO', '💡 Use o comando "clearsession" no console para limpar a sessão.');
             isConnecting = false;
-            isReconnecting = false;
             return;
           }
           
+          destroySocket();
           isConnecting = false;
-          isReconnecting = false;
           
           const delay = getReconnectDelay(reconnectAttempts - 1);
           setTimeout(() => {
@@ -550,20 +527,12 @@ async function connectWhatsApp() {
           return;
         }
 
-        // restartRequired
         if (shouldRestart) {
           log('WARNING', '⚠️ Restart necessário - reconectando...');
           
-          if (globalSock) {
-            try {
-              globalSock.end();
-            } catch (e) { /* ignore */ }
-            globalSock = null;
-          }
-          
+          destroySocket();
           isConnecting = false;
-          isReconnecting = false;
-          reconnectAttempts = Math.max(0, reconnectAttempts - 1);
+          reconnectAttempts = Math.max(0, reconnectAttempts - 1); // Restart não conta como erro real
           
           setTimeout(() => {
             connectWhatsApp();
@@ -571,11 +540,10 @@ async function connectWhatsApp() {
           return;
         }
 
-        // timedOut
         if (isTimedOut) {
           log('WARNING', '⚠️ Timeout - aguardando...');
+          destroySocket();
           isConnecting = false;
-          isReconnecting = false;
           
           const delay = getReconnectDelay(reconnectAttempts - 1);
           log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s...`);
@@ -586,10 +554,9 @@ async function connectWhatsApp() {
           return;
         }
 
-        // Outras desconexões
         log('WARNING', `⚠️ Conexão fechada (código ${statusCode || 'desconhecido'})`);
+        destroySocket();
         isConnecting = false;
-        isReconnecting = false;
         
         const delay = getReconnectDelay(reconnectAttempts - 1);
         log('INFO', `⏳ Reconectando em ${Math.round(delay / 1000)}s...`);
@@ -602,6 +569,8 @@ async function connectWhatsApp() {
       }
 
       if (connection === 'open') {
+        waitingForQRScan = false;
+        qrCodeShown = false;
         isConnecting = false;
         isReconnecting = false;
         reconnectAttempts = 0;
@@ -629,9 +598,6 @@ async function connectWhatsApp() {
       }
     });
 
-    // ============================================
-    // 🔥 EVENTO: MENSAGENS - SEM ALTERAÇÕES
-    // ============================================
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       if (type !== 'notify') return;
@@ -669,7 +635,6 @@ async function connectWhatsApp() {
 
   } catch (error) {
     isConnecting = false;
-    isReconnecting = false;
     log('ERROR', `❌ Erro ao conectar: ${error.message}`);
     
     if (process.env.DEBUG_MODE === 'true') {
@@ -687,9 +652,6 @@ async function connectWhatsApp() {
   }
 }
 
-// ============================================
-// COMANDOS CONSOLE - 🔥 ADICIONADO: clearsession
-// ============================================
 function setupConsoleCommands() {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -713,20 +675,21 @@ function setupConsoleCommands() {
       case 'reconnect':
         log('INFO', '🔄 Forçando reconexão...');
         reconnectAttempts = 0;
-        if (globalSock) {
-          globalSock.end();
-          globalSock = null;
-        }
+        waitingForQRScan = false;
+        qrCodeShown = false;
+        destroySocket();
         connectWhatsApp();
         break;
       case 'reset':
         log('INFO', '🔄 Resetando contadores...');
         reconnectAttempts = 0;
         totalReconnectAttempts = 0;
+        waitingForQRScan = false;
+        qrCodeShown = false;
         log('SUCCESS', '✅ Contadores resetados!');
         break;
       case 'clearsession':
-        log('INFO', '🗑️  Limpando sessão do MongoDB...');
+        log('INFO', '🗑️ Limpando sessão do MongoDB...');
         if (mongoClient) {
           try {
             const db = mongoClient.db('baileys_auth');
@@ -764,9 +727,6 @@ function setupConsoleCommands() {
   });
 }
 
-// ============================================
-// TRATAMENTO DE ERROS
-// ============================================
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
     log('WARNING', `⚠️ Unhandled Rejection: ${err?.message || err}`);
@@ -791,9 +751,6 @@ process.on('uncaughtException', (err) => {
   }
 });
 
-// ============================================
-// ENCERRAMENTO GRACIOSO
-// ============================================
 const shutdown = async () => {
   console.log('\n\n👋 Encerrando bot...');
   log('INFO', '🛑 Bot encerrado');
@@ -812,9 +769,6 @@ const shutdown = async () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// ============================================
-// 🔥 INICIA O BOT
-// ============================================
 async function startBot() {
   initializeOnce();
   await connectWhatsApp();
