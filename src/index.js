@@ -352,7 +352,21 @@ async function connectWhatsApp() {
           : null;
 
         const shouldLogout = statusCode === DisconnectReason.loggedOut;
+        const isRestartRequired = statusCode === DisconnectReason.restartRequired;
         const isLoginTimeout = statusCode === 440;
+
+        // 🔥 CRÍTICO: restartRequired (515) após QR scan - COMPORTAMENTO NORMAL
+        if (isRestartRequired) {
+          log('INFO', '🔄 WhatsApp solicitou restart (pós-QR scan) - Reconectando...');
+          destroySocket();
+          isConnecting = false;
+          
+          // Reconexão imediata (comportamento normal)
+          setTimeout(() => {
+            connectWhatsApp();
+          }, 1000);
+          return;
+        }
 
         if (shouldLogout) {
           log('ERROR', '❌ Logout detectado');
@@ -431,7 +445,8 @@ async function connectWhatsApp() {
           }
           
           reconnectAttempts = 0;
-          consecutive440Errors = 0;
+          // 🔥 CRÍTICO: NÃO reseta consecutive440Errors aqui!
+          // Só reseta quando houver estabilidade (após RECONNECT_RESET_TIME)
           
           log('SUCCESS', '✅ Conectado E AUTENTICADO ao WhatsApp!');
           console.log('\n🎉 ┌────────────────────────────────────────────┐');
@@ -450,17 +465,17 @@ async function connectWhatsApp() {
           console.log('   stats | blocked | users | clearsession\n');
           
         } else {
-          // 🔥 NOVO: Aguarda autenticação completar (timeout de 30s)
+          // 🔥 NOVO: Aguarda autenticação completar (timeout de 45s - aumentado)
           log('INFO', '⏳ Aguardando autenticação completar (QR Code escaneado)...');
           
           authenticationTimeout = setTimeout(() => {
             if (!sock.user) {
-              log('WARNING', '⚠️ Timeout de autenticação - reconectando...');
+              log('WARNING', '⚠️ Timeout de autenticação após 45s - reconectando...');
               destroySocket();
               isConnecting = false;
               connectWhatsApp();
             }
-          }, 30000); // 30 segundos
+          }, 45000); // 45 segundos (aumentado de 30)
         }
         
         return;
