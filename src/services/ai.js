@@ -1,5 +1,14 @@
 import { callGroqAI } from '../config/groq.js';
-import { getSystemPromptForCustomer, FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
+import { 
+  getSystemPromptForCustomer, 
+  FANPAGE_MESSAGE,
+  detectRecommendedPlan,
+  getSalesScript,
+  getPlansComparison,
+  getPlanDetails,
+  PRICING_PLANS,
+  SALES_SCRIPTS
+} from '../utils/knowledgeBase.js';
 import { log } from '../utils/helpers.js';
 import NodeCache from 'node-cache';
 
@@ -14,14 +23,21 @@ const conversationCache = new NodeCache({
 });
 
 /**
- * Limite de mensagens no histórico (para não ultrapassar limite de tokens)
+ * 🔥 NOVO: CACHE DE CONTEXTO DE VENDAS
+ * Armazena informações sobre o processo de venda de cada cliente
+ */
+const salesContextCache = new NodeCache({
+  stdTTL: 3600,
+  checkperiod: 300
+});
+
+/**
+ * Limite de mensagens no histórico
  */
 const MAX_HISTORY_MESSAGES = 10;
 
 /**
  * Obtém histórico de conversa do usuário
- * @param {string} phone - Número do telefone
- * @returns {Array}
  */
 function getConversationHistory(phone) {
   if (!phone) return [];
@@ -30,13 +46,10 @@ function getConversationHistory(phone) {
 
 /**
  * Salva histórico de conversa do usuário
- * @param {string} phone - Número do telefone
- * @param {Array} history - Histórico de mensagens
  */
 function saveConversationHistory(phone, history) {
   if (!phone) return;
   
-  // Limita o tamanho do histórico
   const limitedHistory = history.slice(-MAX_HISTORY_MESSAGES);
   conversationCache.set(phone, limitedHistory);
   
@@ -46,10 +59,51 @@ function saveConversationHistory(phone, history) {
 }
 
 /**
- * 🔥 EXPORTADA: Adiciona mensagem ao histórico
- * @param {string} phone - Número do telefone
- * @param {string} role - Papel (user ou assistant)
- * @param {string} content - Conteúdo da mensagem
+ * 🔥 NOVO: Obtém contexto de vendas do usuário
+ */
+function getSalesContext(phone) {
+  if (!phone) return null;
+  return salesContextCache.get(phone) || {
+    stage: 'discovery', // discovery, recommendation, objection, closing
+    recommendedPlan: null,
+    detectedNeeds: [],
+    objections: [],
+    questionsAsked: 0,
+    planMentioned: false
+  };
+}
+
+/**
+ * 🔥 NOVO: Salva contexto de vendas
+ */
+function saveSalesContext(phone, context) {
+  if (!phone) return;
+  salesContextCache.set(phone, context);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `📊 Contexto de vendas salvo: ${phone} - Estágio: ${context.stage}`);
+  }
+}
+
+/**
+ * 🔥 NOVO: Atualiza estágio de vendas
+ */
+function updateSalesStage(phone, newStage, additionalData = {}) {
+  const context = getSalesContext(phone);
+  context.stage = newStage;
+  
+  // Merge additional data
+  Object.assign(context, additionalData);
+  
+  saveSalesContext(phone, context);
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `🎯 Estágio atualizado para: ${newStage}`);
+  }
+}
+
+/**
+ * Adiciona mensagem ao histórico
  */
 export function addToHistory(phone, role, content) {
   if (!phone || !role || !content) {
@@ -62,25 +116,23 @@ export function addToHistory(phone, role, content) {
   saveConversationHistory(phone, history);
   
   if (process.env.DEBUG_MODE === 'true') {
-    log('INFO', `📝 Mensagem adicionada ao histórico: ${phone} [${role}] (${content.length} chars)`);
+    log('INFO', `📝 Mensagem adicionada: ${phone} [${role}] (${content.length} chars)`);
   }
 }
 
 /**
- * Limpa histórico de conversa de um usuário
- * @param {string} phone - Número do telefone
+ * Limpa histórico de conversa
  */
 export function clearConversationHistory(phone) {
   if (!phone) return;
   
   conversationCache.del(phone);
-  log('INFO', `🗑️ Histórico de conversa limpo para: ${phone}`);
+  salesContextCache.del(phone);
+  log('INFO', `🗑️ Histórico e contexto limpos para: ${phone}`);
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Obtém tamanho do histórico
- * @param {string} phone - Número do telefone
- * @returns {number}
+ * Obtém tamanho do histórico
  */
 export function getHistorySize(phone) {
   const history = getConversationHistory(phone);
@@ -88,98 +140,173 @@ export function getHistorySize(phone) {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Verifica se usuário tem histórico ativo
- * @param {string} phone - Número do telefone
- * @returns {boolean}
+ * Verifica se usuário tem histórico ativo
  */
 export function hasActiveHistory(phone) {
   return conversationCache.has(phone);
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Obtém estatísticas do cache de histórico
- * @returns {Object}
+ * 🔥 NOVO: Analisa mensagem do cliente para contexto de vendas
  */
-export function getHistoryStats() {
-  const keys = conversationCache.keys();
-  
-  let totalMessages = 0;
-  const historyDetails = keys.map(phone => {
-    const history = conversationCache.get(phone);
-    const messageCount = history.length;
-    totalMessages += messageCount;
-    
-    return {
-      phone,
-      messageCount,
-      lastUpdate: conversationCache.getTtl(phone)
-    };
-  });
-  
-  return {
-    activeConversations: keys.length,
-    totalMessages,
-    averageMessagesPerConversation: keys.length > 0 ? (totalMessages / keys.length).toFixed(1) : 0,
-    details: historyDetails
+function analyzeMessageForSales(message, currentContext) {
+  const analysis = {
+    hasQuestion: false,
+    hasPriceQuestion: false,
+    hasComparisonQuestion: false,
+    hasObjection: false,
+    showsInterest: false,
+    mentionsPlan: false,
+    detectedPlan: null
   };
+  
+  const msg = message.toLowerCase();
+  
+  // Detecta perguntas
+  analysis.hasQuestion = msg.includes('?') || 
+    msg.includes('qual') || 
+    msg.includes('como') || 
+    msg.includes('quanto');
+  
+  // Detecta pergunta sobre preço
+  analysis.hasPriceQuestion = msg.includes('preço') || 
+    msg.includes('preco') || 
+    msg.includes('valor') || 
+    msg.includes('custa') || 
+    msg.includes('quanto é') ||
+    msg.includes('quanto e');
+  
+  // Detecta comparação entre planos
+  analysis.hasComparisonQuestion = msg.includes('diferença') || 
+    msg.includes('diferenca') || 
+    msg.includes('comparar') || 
+    msg.includes('qual melhor') ||
+    msg.includes('qual escolher');
+  
+  // Detecta objeções comuns
+  analysis.hasObjection = msg.includes('caro') || 
+    msg.includes('muito dinheiro') || 
+    msg.includes('não tenho') ||
+    msg.includes('nao tenho') ||
+    msg.includes('pensando');
+  
+  // Detecta sinais de interesse
+  analysis.showsInterest = msg.includes('quero') || 
+    msg.includes('interessado') || 
+    msg.includes('gostei') || 
+    msg.includes('vou querer') ||
+    msg.includes('como faço') ||
+    msg.includes('como faco') ||
+    msg.includes('próximo passo') ||
+    msg.includes('proximo passo');
+  
+  // Detecta menção a planos
+  analysis.mentionsPlan = msg.includes('básico') || 
+    msg.includes('basico') || 
+    msg.includes('completo') || 
+    msg.includes('r$ 299') ||
+    msg.includes('r$ 499');
+  
+  // Detecta qual plano seria ideal
+  analysis.detectedPlan = detectRecommendedPlan(message);
+  
+  return analysis;
 }
 
 /**
- * Gera instruções de contextualização dinâmicas
- * @param {boolean} isFirstMessage - Se é a primeira mensagem
- * @param {string} customerName - Nome do cliente
- * @returns {string}
+ * 🔥 NOVO: Gera instruções contextuais de vendas
  */
-function getContextInstructions(isFirstMessage, customerName) {
-  if (isFirstMessage) {
-    return `
-## 🔥 CONTEXTO ATUAL:
-Esta é a **PRIMEIRA MENSAGEM** do cliente ${customerName}.
-
-**VOCÊ DEVE:**
-✅ Cumprimentar o cliente pelo nome
-✅ Se apresentar como Assistente Virtual da Stream Studio
-✅ Ser caloroso e acolhedor
-
-**EXEMPLO:**
-"Olá ${customerName}! 👋 Sou o Assistente Virtual da Stream Studio..."
-`;
-  } else {
-    return `
-## 🔥 CONTEXTO ATUAL:
-Esta é uma **CONTINUAÇÃO** de conversa com ${customerName}.
-
-**HISTÓRICO DISPONÍVEL:**
-O histórico completo está acima. Leia TODO o histórico antes de responder.
-
-**VOCÊ DEVE:**
-✅ Continuar naturalmente a partir do contexto anterior
-✅ Referenciar informações já mencionadas
-✅ Ser progressivo: cada resposta avança a conversa
-✅ NÃO repetir informações já fornecidas
-
-**VOCÊ NÃO DEVE:**
-❌ Cumprimentar novamente ("Olá", "Oi", etc.)
-❌ Se reapresentar
-❌ Repetir informações do histórico
-❌ Recomeçar a conversa do zero
-
-**EXEMPLO CORRETO:**
-Cliente: "Qual o preço?"
-Você: "O bot está em promoção: R$ 499,00..." ← ✅ Direto ao ponto
-
-Cliente: "Posso parcelar?"
-Você: "Sim! Você pode parcelar em até 5x..." ← ✅ Continua naturalmente
-`;
+function getSalesContextInstructions(phone, customerName, salesContext, messageAnalysis) {
+  const { stage, recommendedPlan, questionsAsked, planMentioned } = salesContext;
+  
+  let instructions = '\n\n## 🎯 CONTEXTO ATUAL DA VENDA:\n\n';
+  
+  // Estágio da venda
+  switch (stage) {
+    case 'discovery':
+      instructions += `**Estágio:** DESCOBERTA (${questionsAsked}/3 perguntas feitas)\n\n`;
+      
+      if (questionsAsked === 0) {
+        instructions += `**Ação:** Cumprimente ${customerName} e faça 2-3 perguntas para entender:\n`;
+        instructions += `- Tipo de negócio e se já funciona\n`;
+        instructions += `- Volume de pedidos por dia\n`;
+        instructions += `- Necessidades específicas (pizzaria? vários bairros? fidelização?)\n\n`;
+        instructions += `**Importante:** NÃO mencione preços ainda! Foque em entender necessidades.\n`;
+      } else if (questionsAsked < 3 && !messageAnalysis.detectedPlan) {
+        instructions += `**Ação:** Continue a descoberta. Faça mais 1-2 perguntas para clarificar necessidades.\n`;
+        instructions += `Ainda não recomende plano - precise melhor o perfil do cliente.\n`;
+      } else {
+        instructions += `**Ação:** Você tem informações suficientes! Parta para RECOMENDAÇÃO.\n`;
+        if (messageAnalysis.detectedPlan) {
+          instructions += `**Plano detectado:** ${messageAnalysis.detectedPlan}\n`;
+        }
+      }
+      break;
+      
+    case 'recommendation':
+      instructions += `**Estágio:** RECOMENDAÇÃO\n`;
+      instructions += `**Plano recomendado:** ${recommendedPlan || 'A definir'}\n\n`;
+      
+      if (!planMentioned) {
+        instructions += `**Ação:** AGORA sim, recomende o plano ${recommendedPlan || 'adequado'}!\n`;
+        instructions += `- Explique POR QUÊ é ideal para ele\n`;
+        instructions += `- Destaque 3-4 benefícios principais\n`;
+        instructions += `- Mencione valor E economia\n`;
+        instructions += `- Use o script de recomendação apropriado\n`;
+      } else {
+        if (messageAnalysis.hasObjection) {
+          instructions += `**Ação:** Cliente tem objeção! Trate com empatia:\n`;
+          instructions += `1. Valide o sentimento\n`;
+          instructions += `2. Apresente contra-argumento com dados\n`;
+          instructions += `3. Reforce valor e ROI\n`;
+        } else if (messageAnalysis.hasComparisonQuestion) {
+          instructions += `**Ação:** Cliente quer comparar planos. Use a função getPlansComparison().\n`;
+          instructions += `Explique de forma clara e direta as diferenças.\n`;
+        } else if (messageAnalysis.showsInterest) {
+          instructions += `**Ação:** Cliente demonstrou interesse! Parta para FECHAMENTO.\n`;
+        } else {
+          instructions += `**Ação:** Responda dúvidas e reforce benefícios do plano recomendado.\n`;
+        }
+      }
+      break;
+      
+    case 'objection':
+      instructions += `**Estágio:** TRATAMENTO DE OBJEÇÕES\n`;
+      instructions += `**Plano recomendado:** ${recommendedPlan}\n\n`;
+      instructions += `**Ação:** Continue tratando objeções com:\n`;
+      instructions += `- Empatia e validação\n`;
+      instructions += `- Dados concretos (ROI, economia)\n`;
+      instructions += `- Prova social ou garantias\n`;
+      instructions += `- Oferta de teste gratuito\n`;
+      break;
+      
+    case 'closing':
+      instructions += `**Estágio:** FECHAMENTO\n`;
+      instructions += `**Plano escolhido:** ${recommendedPlan}\n\n`;
+      instructions += `**Ação:** Conduza ao fechamento:\n`;
+      instructions += `1. Parabenize a escolha\n`;
+      instructions += `2. Reforce 2-3 benefícios principais\n`;
+      instructions += `3. Passe próximos passos claros\n`;
+      instructions += `4. Mencione bônus Instagram\n`;
+      instructions += `5. Envie link da fanpage\n`;
+      break;
   }
+  
+  // Análise da mensagem atual
+  if (messageAnalysis.hasPriceQuestion && stage === 'discovery') {
+    instructions += `\n⚠️ **Alerta:** Cliente perguntou sobre preço MAS ainda está em descoberta!\n`;
+    instructions += `Diga que vai recomendar o melhor plano APÓS entender as necessidades dele.\n`;
+  }
+  
+  if (messageAnalysis.hasComparisonQuestion) {
+    instructions += `\n📊 **Comparação solicitada:** Use a comparação clara entre Básico e Completo.\n`;
+  }
+  
+  return instructions;
 }
 
 /**
- * 🔥 MELHORADA: Processa mensagem com a IA para NOVO LEAD (interessado no bot)
- * @param {string} phone - Número do telefone
- * @param {string} customerName - Nome do cliente
- * @param {string} userMessage - Mensagem do usuário
- * @returns {Promise<string>} Resposta da IA
+ * 🔥 MELHORADO: Processa mensagem de LEAD com vendas consultivas
  */
 export async function processLeadMessage(phone, customerName, userMessage) {
   try {
@@ -189,51 +316,80 @@ export async function processLeadMessage(phone, customerName, userMessage) {
     
     log('INFO', `🤖 Processando mensagem de LEAD: ${customerName} (${phone})`);
     
-    // Obtém histórico
+    // Obtém contextos
     const history = getConversationHistory(phone);
-    
-    // Verifica se é primeira mensagem
+    const salesContext = getSalesContext(phone);
     const isFirstMessage = history.length === 0;
     
+    // Analisa mensagem para contexto de vendas
+    const messageAnalysis = analyzeMessageForSales(userMessage, salesContext);
+    
     if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
-      if (history.length > 0) {
-        log('INFO', `📜 Últimas mensagens no histórico:`);
-        history.slice(-3).forEach((msg, idx) => {
-          const preview = msg.content.substring(0, 50);
-          log('INFO', `   ${idx + 1}. [${msg.role}]: ${preview}...`);
-        });
-      }
+      log('INFO', `📊 Análise: ${JSON.stringify(messageAnalysis)}`);
+      log('INFO', `🎯 Estágio: ${salesContext.stage} | Plano: ${salesContext.recommendedPlan || 'nenhum'}`);
     }
+    
+    // Atualiza contexto de vendas baseado na análise
+    if (isFirstMessage) {
+      salesContext.stage = 'discovery';
+      salesContext.questionsAsked = 0;
+    } else if (messageAnalysis.detectedPlan && salesContext.stage === 'discovery') {
+      // Tem informação suficiente para recomendar
+      salesContext.stage = 'recommendation';
+      salesContext.recommendedPlan = messageAnalysis.detectedPlan;
+      salesContext.detectedNeeds.push(messageAnalysis.detectedPlan);
+    } else if (salesContext.stage === 'discovery') {
+      // Ainda em descoberta
+      salesContext.questionsAsked++;
+    }
+    
+    if (messageAnalysis.hasObjection && salesContext.stage === 'recommendation') {
+      salesContext.stage = 'objection';
+      salesContext.objections.push(userMessage);
+    }
+    
+    if (messageAnalysis.showsInterest && 
+        (salesContext.stage === 'recommendation' || salesContext.stage === 'objection')) {
+      salesContext.stage = 'closing';
+    }
+    
+    if (messageAnalysis.mentionsPlan) {
+      salesContext.planMentioned = true;
+    }
+    
+    saveSalesContext(phone, salesContext);
     
     // System prompt base
     const baseSystemPrompt = getSystemPromptForCustomer(customerName);
     
-    // Adiciona instruções de contextualização
-    const contextInstructions = getContextInstructions(isFirstMessage, customerName);
+    // Instruções contextuais de vendas
+    const salesInstructions = getSalesContextInstructions(
+      phone, 
+      customerName, 
+      salesContext, 
+      messageAnalysis
+    );
     
     // System prompt completo
-    const fullSystemPrompt = `${baseSystemPrompt}
+    const fullSystemPrompt = `${baseSystemPrompt}${salesInstructions}
 
-${contextInstructions}
+## 📋 INFORMAÇÕES ADICIONAIS DO CLIENTE:
 
-## 🎯 REGRAS DE SAUDAÇÃO:
+**Nome:** ${customerName}
+**Histórico:** ${history.length} mensagens anteriores
+**Estágio da venda:** ${salesContext.stage}
+${salesContext.recommendedPlan ? `**Plano recomendado:** ${salesContext.recommendedPlan}` : ''}
 
-**QUANDO SAUDAR:**
-✅ Apenas na primeira mensagem (histórico vazio)
-✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia", "Tenho interesse")
+---
 
-**QUANDO NÃO SAUDAR:**
-❌ Em qualquer continuação de conversa
-❌ Quando cliente faz pergunta direta
-❌ Quando já cumprimentou antes no histórico
-
-**IMPORTANTE:**
-- Se há histórico, NÃO cumprimente novamente
-- Continue a conversa naturalmente
-- Faça referência ao que já foi discutido`;
+**Lembre-se:**
+- Use o histórico para criar continuidade
+- Não repita informações já ditas
+- Seja progressivo em cada resposta
+- Máximo 10 linhas por resposta
+- Use 2-4 emojis moderadamente`;
     
-    // Monta array de mensagens
+    // Monta mensagens
     const messages = [
       {
         role: 'system',
@@ -247,7 +403,7 @@ ${contextInstructions}
     ];
     
     if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `📄 Enviando para IA: ${messages.length} mensagens (incluindo system prompt)`);
+      log('INFO', `📤 Enviando para IA: ${messages.length} mensagens`);
     }
     
     // Chama a IA
@@ -261,7 +417,7 @@ ${contextInstructions}
     addToHistory(phone, 'user', userMessage);
     addToHistory(phone, 'assistant', aiResponse);
     
-    log('SUCCESS', `✅ Resposta gerada para ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'}) - ${aiResponse.length} chars`);
+    log('SUCCESS', `✅ Resposta gerada: ${customerName} [${salesContext.stage}] - ${aiResponse.length} chars`);
     
     return aiResponse;
     
@@ -274,11 +430,7 @@ ${contextInstructions}
 }
 
 /**
- * 🔥 MELHORADA: Processa mensagem com a IA para CLIENTE EXISTENTE
- * @param {string} phone - Número do telefone
- * @param {string} customerName - Nome do cliente
- * @param {string} userMessage - Mensagem do usuário
- * @returns {Promise<string>} Resposta da IA
+ * Processa mensagem de CLIENTE EXISTENTE
  */
 export async function processClientMessage(phone, customerName, userMessage) {
   try {
@@ -289,62 +441,42 @@ export async function processClientMessage(phone, customerName, userMessage) {
     log('INFO', `🤖 Processando mensagem de CLIENTE: ${customerName} (${phone})`);
     
     const ownerName = process.env.OWNER_NAME || 'Roberto';
-    
-    // Obtém histórico
     const history = getConversationHistory(phone);
-    
-    // Verifica se é primeira mensagem
     const isFirstMessage = history.length === 0;
     
     if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `📊 Histórico: ${history.length} mensagens | Primeira mensagem: ${isFirstMessage}`);
+      log('INFO', `📊 Histórico: ${history.length} mensagens`);
     }
     
-    // Adiciona instruções de contextualização
-    const contextInstructions = getContextInstructions(isFirstMessage, customerName);
-    
-    // System prompt para clientes existentes (mais genérico)
+    // System prompt para clientes existentes
     const systemPrompt = `Você é o Assistente Virtual da Stream Studio.
 
 O cliente ${customerName} já é um cliente conhecido e pode ter projetos em andamento com o ${ownerName}.
 
 Sua função é:
 1. Ser cordial e receptivo
-2. Perguntar se ele tem algum projeto em andamento
+2. Perguntar se ele tem algum projeto em andamento ou dúvida sobre algo já contratado
 3. Se sim, informar que o ${ownerName} logo irá atendê-lo
 4. Se não, perguntar como pode ajudar
 5. Responder dúvidas gerais sobre a empresa
-6. Sempre que apropriado, informar que o ${ownerName} pode dar mais detalhes
+6. Para questões técnicas ou comerciais complexas, sempre encaminhe para o ${ownerName}
 
 **IMPORTANTE:**
 - Seja breve e objetivo (máximo 5 linhas)
 - Não faça promessas sobre projetos ou prazos
-- Para questões técnicas específicas, sempre encaminhe para o ${ownerName}
 - Use um tom amigável mas profissional
+- ${isFirstMessage ? 'Cumprimente o cliente' : 'Continue a conversa naturalmente'}
 
 **CONTATO:**
-WhatsApp do Roberto: ${process.env.WHATSAPP_SUPPORT}
-
-${contextInstructions}
-
-## 🎯 REGRAS DE SAUDAÇÃO:
-
-**QUANDO SAUDAR:**
-✅ Apenas na primeira mensagem (histórico vazio)
-✅ Quando cliente envia saudação explícita ("Oi", "Olá", "Bom dia", "Tenho interesse")
-
-**QUANDO NÃO SAUDAR:**
-❌ Em qualquer continuação de conversa
-❌ Quando cliente faz pergunta direta
-❌ Quando já cumprimentou antes no histórico
+WhatsApp do ${ownerName}: ${process.env.WHATSAPP_SUPPORT}
 
 **USO DO HISTÓRICO:**
 - SEMPRE leia TODO o histórico antes de responder
 - Não repita informações já fornecidas
 - Faça referência ao que já foi discutido
-- Seja progressivo: cada resposta avança a conversa`;
+- ${isFirstMessage ? '' : 'NÃO cumprimente novamente se já cumprimentou'}`;
     
-    // Monta array de mensagens
+    // Monta mensagens
     const messages = [
       {
         role: 'system',
@@ -357,10 +489,6 @@ ${contextInstructions}
       }
     ];
     
-    if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `📄 Enviando para IA: ${messages.length} mensagens`);
-    }
-    
     // Chama a IA
     const aiResponse = await callGroqAI(messages);
     
@@ -372,7 +500,7 @@ ${contextInstructions}
     addToHistory(phone, 'user', userMessage);
     addToHistory(phone, 'assistant', aiResponse);
     
-    log('SUCCESS', `✅ Resposta gerada para cliente ${customerName} (${isFirstMessage ? 'PRIMEIRA' : 'CONTINUAÇÃO'}) - ${aiResponse.length} chars`);
+    log('SUCCESS', `✅ Resposta gerada para cliente ${customerName} - ${aiResponse.length} chars`);
     
     return aiResponse;
     
@@ -386,33 +514,28 @@ ${contextInstructions}
 }
 
 /**
- * 🔥 CORRIGIDA: Gera resposta de boas-vindas inteligente com IA
- * @param {string} customerName - Nome do cliente
- * @param {boolean} isLead - Se é um novo lead
- * @returns {Promise<string>}
+ * 🔥 MELHORADO: Gera mensagem de boas-vindas
  */
 export async function generateWelcomeMessage(customerName, isLead = false) {
   try {
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     
-    // 🔥 CORREÇÃO: Sempre usa mensagem de Lead para primeira interação
-    // Parâmetro isLead agora sempre recebe TRUE do messageHandler.js
     if (isLead) {
-      // Para novos leads/contatos (SEMPRE na primeira mensagem)
+      // Para novos leads (SEMPRE na primeira mensagem)
       return `Olá ${customerName}! 👋
 
 Sou o *Assistente Virtual da Stream Studio* e darei inicio ao seu atendimento ok! 🤖
 
 Pode me perguntar à vontade sobre:
-- O *Chat Bot Multi-tarefas*;
-- Desenvolvimento de sites, aplicativos;
-- Desing, criação de logomarca,
+- O *Chat Bot Multi-tarefas* (temos 2 planos!)
+- Desenvolvimento de sites, aplicativos
+- Design, criação de logomarca
 - Suporte técnico
 - E muito mais!
 
 Como posso ajudar você? 😊`;
     } else {
-      // Para clientes recorrentes (NÃO USADO mais na primeira mensagem)
+      // Para clientes recorrentes
       return `Olá *${customerName}*! 👋
 
 Que bom te ver por aqui! 
@@ -430,9 +553,7 @@ Como posso ajudar hoje? É sobre algum projeto em andamento, ou alguma conversa 
 }
 
 /**
- * Verifica se a mensagem menciona interesse em ver a fanpage
- * @param {string} message - Mensagem do usuário
- * @returns {boolean}
+ * Verifica se deve enviar link da fanpage
  */
 export function shouldSendFanpageLink(message) {
   if (!message || typeof message !== 'string') return false;
@@ -449,7 +570,13 @@ export function shouldSendFanpageLink(message) {
     'acessar',
     'link',
     'endereço',
-    'endereco'
+    'endereco',
+    'quero ver',
+    'mostrar',
+    'próximo passo',
+    'proximo passo',
+    'como faço',
+    'como faco'
   ];
   
   const msg = message.toLowerCase();
@@ -457,9 +584,7 @@ export function shouldSendFanpageLink(message) {
 }
 
 /**
- * Verifica se deve encaminhar para o Roberto (questões complexas)
- * @param {string} message - Mensagem do usuário
- * @returns {boolean}
+ * Verifica se deve encaminhar para o Roberto
  */
 export function shouldForwardToOwner(message) {
   if (!message || typeof message !== 'string') return false;
@@ -483,29 +608,119 @@ export function shouldForwardToOwner(message) {
 }
 
 /**
- * 🔥 MELHORADA: Obtém estatísticas de uso da IA
- * @returns {Object}
+ * Obtém estatísticas de uso da IA
  */
 export function getAIStats() {
-  return getHistoryStats();
+  const conversationKeys = conversationCache.keys();
+  const salesKeys = salesContextCache.keys();
+  
+  let totalMessages = 0;
+  const conversations = conversationKeys.map(phone => {
+    const history = conversationCache.get(phone);
+    const messageCount = history.length;
+    totalMessages += messageCount;
+    
+    const salesContext = salesContextCache.get(phone);
+    
+    return {
+      phone,
+      messageCount,
+      salesStage: salesContext?.stage || 'unknown',
+      recommendedPlan: salesContext?.recommendedPlan || 'none'
+    };
+  });
+  
+  // Conta por estágio de venda
+  const stageCount = {
+    discovery: 0,
+    recommendation: 0,
+    objection: 0,
+    closing: 0,
+    unknown: 0
+  };
+  
+  conversations.forEach(conv => {
+    stageCount[conv.salesStage] = (stageCount[conv.salesStage] || 0) + 1;
+  });
+  
+  return {
+    activeConversations: conversationKeys.length,
+    totalMessages,
+    averageMessagesPerConversation: conversationKeys.length > 0 
+      ? (totalMessages / conversationKeys.length).toFixed(1) 
+      : 0,
+    salesStages: stageCount,
+    conversations
+  };
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Limpa históricos expirados (mais de 1 hora)
- * @returns {number} Quantidade de históricos limpos
+ * 🔥 NOVO: Obtém estatísticas de vendas
  */
-export function cleanExpiredHistories() {
-  const keys = conversationCache.keys();
-  let cleaned = 0;
+export function getSalesStats() {
+  const keys = salesContextCache.keys();
+  
+  const stats = {
+    totalLeads: keys.length,
+    byStage: {
+      discovery: 0,
+      recommendation: 0,
+      objection: 0,
+      closing: 0
+    },
+    byPlan: {
+      basico: 0,
+      completo: 0,
+      indeciso: 0,
+      none: 0
+    },
+    averageQuestionsAsked: 0
+  };
+  
+  let totalQuestions = 0;
   
   keys.forEach(phone => {
+    const context = salesContextCache.get(phone);
+    if (context) {
+      stats.byStage[context.stage] = (stats.byStage[context.stage] || 0) + 1;
+      
+      if (context.recommendedPlan) {
+        stats.byPlan[context.recommendedPlan] = (stats.byPlan[context.recommendedPlan] || 0) + 1;
+      } else {
+        stats.byPlan.none++;
+      }
+      
+      totalQuestions += context.questionsAsked || 0;
+    }
+  });
+  
+  stats.averageQuestionsAsked = keys.length > 0 
+    ? (totalQuestions / keys.length).toFixed(1) 
+    : 0;
+  
+  return stats;
+}
+
+/**
+ * Limpa históricos expirados
+ */
+export function cleanExpiredHistories() {
+  const conversationKeys = conversationCache.keys();
+  const salesKeys = salesContextCache.keys();
+  let cleaned = 0;
+  
+  conversationKeys.forEach(phone => {
     const ttl = conversationCache.getTtl(phone);
-    
-    // Se TTL é 0 ou undefined, o cache expirou
     if (!ttl || ttl === 0) {
       conversationCache.del(phone);
       cleaned++;
-      log('INFO', `🧹 Histórico expirado removido: ${phone}`);
+    }
+  });
+  
+  salesKeys.forEach(phone => {
+    const ttl = salesContextCache.getTtl(phone);
+    if (!ttl || ttl === 0) {
+      salesContextCache.del(phone);
     }
   });
   
@@ -517,10 +732,10 @@ export function cleanExpiredHistories() {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Lista todas as conversas ativas
+ * Lista conversas ativas
  */
 export function listActiveConversations() {
-  const stats = getHistoryStats();
+  const stats = getAIStats();
   
   console.log('\n💬 ╔═══════════════════════════════════════════╗');
   console.log('💬 CONVERSAS ATIVAS COM IA');
@@ -529,16 +744,141 @@ export function listActiveConversations() {
   console.log(`Mensagens totais: ${stats.totalMessages}`);
   console.log(`Média por conversa: ${stats.averageMessagesPerConversation}`);
   console.log('');
+  console.log('📊 Por Estágio de Venda:');
+  console.log(`   🔍 Descoberta: ${stats.salesStages.discovery}`);
+  console.log(`   💡 Recomendação: ${stats.salesStages.recommendation}`);
+  console.log(`   ⚠️ Objeção: ${stats.salesStages.objection}`);
+  console.log(`   ✅ Fechamento: ${stats.salesStages.closing}`);
+  console.log('');
   
-  if (stats.details.length > 0) {
-    stats.details.forEach((detail, index) => {
-      console.log(`${index + 1}. ${detail.phone}`);
-      console.log(`   Mensagens: ${detail.messageCount}`);
+  if (stats.conversations.length > 0) {
+    console.log('Detalhes:');
+    stats.conversations.forEach((conv, index) => {
+      console.log(`${index + 1}. ${conv.phone}`);
+      console.log(`   Mensagens: ${conv.messageCount} | Estágio: ${conv.salesStage} | Plano: ${conv.recommendedPlan}`);
       console.log('');
     });
   }
   
   console.log('💬 ╚═══════════════════════════════════════════╝\n');
+}
+
+/**
+ * 🔥 NOVO: Mostra estatísticas de vendas
+ */
+export function showSalesStats() {
+  const stats = getSalesStats();
+  
+  console.log('\n📊 ╔═══════════════════════════════════════════╗');
+  console.log('📊 ESTATÍSTICAS DE VENDAS');
+  console.log('📊 ╚═══════════════════════════════════════════╝');
+  console.log(`Total de Leads: ${stats.totalLeads}`);
+  console.log('');
+  console.log('Por Estágio:');
+  console.log(`   🔍 Descoberta: ${stats.byStage.discovery}`);
+  console.log(`   💡 Recomendação: ${stats.byStage.recommendation}`);
+  console.log(`   ⚠️ Objeção: ${stats.byStage.objection}`);
+  console.log(`   ✅ Fechamento: ${stats.byStage.closing}`);
+  console.log('');
+  console.log('Por Plano Recomendado:');
+  console.log(`   🌟 Básico: ${stats.byPlan.basico}`);
+  console.log(`   🚀 Completo: ${stats.byPlan.completo}`);
+  console.log(`   ❓ Indeciso: ${stats.byPlan.indeciso}`);
+  console.log(`   ➖ Nenhum: ${stats.byPlan.none}`);
+  console.log('');
+  console.log(`Média de perguntas feitas: ${stats.averageQuestionsAsked}`);
+  console.log('📊 ╚═══════════════════════════════════════════╝\n');
+}
+
+/**
+ * 🔥 NOVO: Reseta contexto de vendas de um usuário
+ */
+export function resetSalesContext(phone) {
+  if (!phone) return false;
+  
+  const existed = salesContextCache.has(phone);
+  salesContextCache.del(phone);
+  
+  if (existed) {
+    log('INFO', `🔄 Contexto de vendas resetado: ${phone}`);
+  }
+  
+  return existed;
+}
+
+/**
+ * 🔥 NOVO: Obtém detalhes do contexto de vendas (para debug)
+ */
+export function getSalesContextDetails(phone) {
+  if (!phone) return null;
+  
+  const context = getSalesContext(phone);
+  const history = getConversationHistory(phone);
+  
+  return {
+    phone,
+    salesContext: context,
+    historySize: history.length,
+    lastMessages: history.slice(-3).map(msg => ({
+      role: msg.role,
+      preview: msg.content.substring(0, 50) + '...'
+    }))
+  };
+}
+
+/**
+ * 🔥 NOVO: Força mudança de estágio de vendas (útil para testes)
+ */
+export function forceSalesStage(phone, stage, planOverride = null) {
+  if (!phone || !stage) return false;
+  
+  const validStages = ['discovery', 'recommendation', 'objection', 'closing'];
+  if (!validStages.includes(stage)) {
+    log('WARNING', `⚠️ Estágio inválido: ${stage}`);
+    return false;
+  }
+  
+  const context = getSalesContext(phone);
+  context.stage = stage;
+  
+  if (planOverride) {
+    context.recommendedPlan = planOverride;
+  }
+  
+  saveSalesContext(phone, context);
+  log('SUCCESS', `✅ Estágio forçado para: ${stage} ${planOverride ? `(Plano: ${planOverride})` : ''}`);
+  
+  return true;
+}
+
+/**
+ * 🔥 NOVO: Exporta dados de vendas para análise
+ */
+export function exportSalesData() {
+  const keys = salesContextCache.keys();
+  
+  const data = keys.map(phone => {
+    const context = salesContextCache.get(phone);
+    const history = getConversationHistory(phone);
+    
+    return {
+      phone,
+      stage: context.stage,
+      recommendedPlan: context.recommendedPlan,
+      questionsAsked: context.questionsAsked,
+      detectedNeeds: context.detectedNeeds,
+      objections: context.objections,
+      planMentioned: context.planMentioned,
+      messageCount: history.length,
+      exportedAt: new Date().toISOString()
+    };
+  });
+  
+  return {
+    exportDate: new Date().toISOString(),
+    totalLeads: keys.length,
+    leads: data
+  };
 }
 
 export default {
@@ -549,10 +889,15 @@ export default {
   shouldSendFanpageLink,
   shouldForwardToOwner,
   getAIStats,
+  getSalesStats,
   getHistorySize,
   hasActiveHistory,
-  getHistoryStats,
   cleanExpiredHistories,
   listActiveConversations,
-  addToHistory
+  showSalesStats,
+  addToHistory,
+  resetSalesContext,
+  getSalesContextDetails,
+  forceSalesStage,
+  exportSalesData
 };

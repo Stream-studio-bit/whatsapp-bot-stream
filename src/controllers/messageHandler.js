@@ -27,7 +27,8 @@ import {
   processClientMessage,
   generateWelcomeMessage,
   shouldSendFanpageLink,
-  addToHistory
+  addToHistory,
+  getSalesStats
 } from '../services/ai.js';
 
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
@@ -35,13 +36,16 @@ import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
 
-// 🔥 Armazena timestamp de inicialização
+// 🔥 Timestamp de inicialização
 const BOT_START_TIME = Date.now();
 
-// 🔥 Set para rastrear mensagens já processadas
+// 🔥 Cache de mensagens processadas
 const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 1000;
 
+/**
+ * Limpa maps antigos
+ */
 function cleanupDebounceMap() {
   const now = Date.now();
   const MAX_AGE = 60000;
@@ -52,7 +56,7 @@ function cleanupDebounceMap() {
     }
   }
   
-  // 🔥 Limpa cache de mensagens processadas
+  // Limpa cache de mensagens
   if (processedMessages.size > MAX_PROCESSED_CACHE) {
     processedMessages.clear();
     log('INFO', '🧹 Cache de mensagens processadas limpo');
@@ -62,24 +66,20 @@ function cleanupDebounceMap() {
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * 🔥 Verifica se a mensagem é RECENTE (depois do bot iniciar)
+ * Verifica se a mensagem é RECENTE
  */
 function isRecentMessage(message) {
   try {
     const messageTimestamp = message.messageTimestamp;
     
     if (!messageTimestamp) {
-      // Sem timestamp = assume recente (melhor processar do que perder)
       return true;
     }
     
-    // Converte timestamp (pode estar em segundos ou milissegundos)
     let messageTime;
     if (typeof messageTimestamp === 'object' && messageTimestamp.low) {
-      // Timestamp em formato objeto (Baileys)
       messageTime = messageTimestamp.low * 1000;
     } else if (typeof messageTimestamp === 'number') {
-      // Se o número é muito pequeno, está em segundos
       messageTime = messageTimestamp < 10000000000 
         ? messageTimestamp * 1000 
         : messageTimestamp;
@@ -87,7 +87,6 @@ function isRecentMessage(message) {
       return true;
     }
     
-    // 🔥 Mensagens DEPOIS do bot iniciar (mais recentes que BOT_START_TIME)
     const isRecent = messageTime >= BOT_START_TIME;
     
     if (process.env.DEBUG_MODE === 'true') {
@@ -99,7 +98,6 @@ function isRecentMessage(message) {
     return isRecent;
     
   } catch (error) {
-    // Em caso de erro, assume que é recente para não perder mensagens
     if (process.env.DEBUG_MODE === 'true') {
       log('WARNING', `⚠️ Erro ao verificar idade da mensagem: ${error.message}`);
     }
@@ -108,51 +106,50 @@ function isRecentMessage(message) {
 }
 
 /**
- * 🔥 Valida se mensagem deve ser processada
+ * Valida se mensagem deve ser processada
  */
 function shouldProcessMessage(message) {
   try {
-    // 1. Valida estrutura básica
     if (!message || !message.key) {
       return false;
     }
     
     const jid = message.key.remoteJid;
     
-    // 2. Ignora mensagens de broadcast/status
+    // Ignora broadcast
     if (jid === 'status@broadcast' || jid?.includes('broadcast')) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭️ Ignorando mensagem de broadcast');
+        log('INFO', '⭐ Ignorando broadcast');
       }
       return false;
     }
     
-    // 3. Ignora grupos (apenas conversas individuais)
+    // Ignora grupos
     if (jid?.endsWith('@g.us')) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭️ Ignorando mensagem de grupo');
+        log('INFO', '⭐ Ignorando grupo');
       }
       return false;
     }
     
-    // 4. Verifica se é mensagem individual válida
+    // Valida conversa individual
     if (!jid?.endsWith('@s.whatsapp.net')) {
       return false;
     }
     
-    // 5. Verifica se já foi processada
+    // Verifica se já foi processada
     const messageId = message.key.id;
     if (messageId && processedMessages.has(messageId)) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭️ Mensagem já processada, ignorando');
+        log('INFO', '⭐ Mensagem já processada');
       }
       return false;
     }
     
-    // 6. 🔥 Verifica se é mensagem RECENTE
+    // Verifica se é recente
     if (!isRecentMessage(message)) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭️ Ignorando mensagem antiga (anterior à inicialização)');
+        log('INFO', '⭐ Ignorando mensagem antiga');
       }
       return false;
     }
@@ -166,16 +163,15 @@ function shouldProcessMessage(message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL - VERSÃO COMPATÍVEL COM DATABASE.JS
+ * 🔥 HANDLER PRINCIPAL - VERSÃO COM VENDAS CONSULTIVAS
  */
 export async function handleIncomingMessage(sock, message) {
   try {
-    // 🔥 VALIDAÇÃO 0: Verifica se deve processar
+    // 🔥 Validação inicial
     if (!shouldProcessMessage(message)) {
       return;
     }
     
-    // 🔥 VALIDAÇÃO 1: Mensagem válida (conteúdo)
     if (!isValidMessage(message)) {
       return;
     }
@@ -197,9 +193,7 @@ export async function handleIncomingMessage(sock, message) {
     if (message?.key?.fromMe) {
       const clientPhone = extractPhoneNumber(jid);
       
-      // 🔥 SÓ bloqueia se mensagem for RECENTE
       if (isRecentMessage(message)) {
-        // Verifica se já está bloqueado para evitar bloqueios duplicados
         const isAlreadyBlocked = await isBotBlockedForUser(jid);
         
         if (!isAlreadyBlocked) {
@@ -217,20 +211,15 @@ export async function handleIncomingMessage(sock, message) {
           }
         }
       } else {
-        // 🔥 Mensagem antiga do owner - IGNORA completamente
         if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', `⏭️ Ignorando mensagem ANTIGA do owner para ${clientPhone} (histórico)`);
+          log('INFO', `⭐ Ignorando mensagem ANTIGA do owner para ${clientPhone}`);
         }
       }
       
-      return; // Para processamento (owner respondeu ou histórico)
+      return;
     }
 
-    // 🔥 VERIFICAÇÃO DE BLOQUEIO COM AUTO-DESBLOQUEIO INTEGRADO
-    // A função isBotBlockedForUser() do database.js JÁ FAZ:
-    // 1. Verifica se está bloqueado
-    // 2. Verifica se expirou (> 60 minutos)
-    // 3. Desbloqueia automaticamente se expirou
+    // 🔥 VERIFICAÇÃO DE BLOQUEIO COM AUTO-DESBLOQUEIO
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
@@ -242,7 +231,7 @@ export async function handleIncomingMessage(sock, message) {
     if (isBlocked) {
       const clientPhone = extractPhoneNumber(jid);
       log('WARNING', `🚫 MENSAGEM IGNORADA - Bot bloqueado para ${clientPhone} (Owner em atendimento)`);
-      return; // 🔥 PARA AQUI - NÃO PROCESSA NADA
+      return;
     }
 
     // Debounce
@@ -259,7 +248,7 @@ export async function handleIncomingMessage(sock, message) {
     
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}${cleanedMessage.length > 50 ? '...' : ''}"`);
 
-    // 🔥 PASSO 1: Verifica se é primeira interação
+    // 🔥 VERIFICAÇÃO: Primeira interação
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -283,18 +272,19 @@ export async function handleIncomingMessage(sock, message) {
         await markAsNewLead(jid, pushName);
         log('SUCCESS', `🎯 NOVO LEAD (com keywords): ${pushName}`);
       } else {
-        log('SUCCESS', `👤 NOVO CONTATO (sem keywords): ${pushName}`);
+        log('SUCCESS', `👤 NOVO CONTATO: ${pushName}`);
       }
       
       await simulateTyping(sock, jid, 1500);
       
+      // 🔥 Sempre usa mensagem de LEAD na primeira interação
       const welcomeMsg = await generateWelcomeMessage(pushName, true);
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch((err) => {
         log('WARNING', `⚠️ Erro ao enviar mensagem: ${err.message}`);
       });
       
-      // Registra no histórico
+      // Registra no histórico da IA
       try {
         addToHistory(phone, 'user', cleanedMessage);
         addToHistory(phone, 'assistant', welcomeMsg);
@@ -313,12 +303,23 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao salvar histórico no DB: ${err.message}`);
       }
       
-      log('SUCCESS', `✅ Boas-vindas enviadas (LEAD)`);
+      log('SUCCESS', `✅ Boas-vindas enviadas (LEAD - Vendas Consultivas Ativas)`);
+      
+      // 🔥 Log de estatísticas de vendas
+      if (process.env.DEBUG_MODE === 'true') {
+        try {
+          const salesStats = getSalesStats();
+          log('INFO', `📊 Leads Ativos: ${salesStats.totalLeads} | Em Descoberta: ${salesStats.byStage.discovery}`);
+        } catch (err) {
+          // Ignora erro de stats
+        }
+      }
+      
       return;
     }
 
-    // 🔥 MENSAGENS SEGUINTES
-    log('INFO', `📨 Mensagem de ${pushName}`);
+    // 🔥 MENSAGENS SEGUINTES - PROCESSO DE VENDAS
+    log('INFO', `🔨 Processando mensagem de ${pushName}`);
     
     await saveUser(jid, { name: pushName });
     
@@ -330,19 +331,31 @@ export async function handleIncomingMessage(sock, message) {
     
     try {
       if (isLead) {
+        // 🔥 PROCESSAMENTO DE LEAD COM VENDAS CONSULTIVAS
         aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
         
-        if (shouldSendFanpageLink(cleanedMessage)) {
+        // 🔥 Verifica se deve enviar link da fanpage
+        // (geralmente quando cliente pede mais informações ou demonstração)
+        if (shouldSendFanpageLink(cleanedMessage) || 
+            cleanedMessage.toLowerCase().includes('quero') ||
+            cleanedMessage.toLowerCase().includes('interesse')) {
+          
+          // Aguarda um pouco antes de enviar fanpage
           await simulateTyping(sock, jid, 1000);
+          
           await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch((err) => {
             log('WARNING', `⚠️ Erro ao enviar fanpage: ${err.message}`);
           });
+          
+          log('SUCCESS', `📱 Link da fanpage enviado`);
         }
         
-        log('SUCCESS', `✅ Resposta IA (LEAD)`);
+        log('SUCCESS', `✅ Resposta IA gerada (LEAD - Vendas Consultivas)`);
+        
       } else {
+        // 🔥 PROCESSAMENTO DE CLIENTE EXISTENTE
         aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
-        log('SUCCESS', `✅ Resposta IA (CLIENTE)`);
+        log('SUCCESS', `✅ Resposta IA gerada (CLIENTE)`);
       }
       
       if (aiResponse) {
@@ -351,10 +364,20 @@ export async function handleIncomingMessage(sock, message) {
         });
       }
       
+      // 🔥 Log de estatísticas após cada interação (debug)
+      if (process.env.DEBUG_MODE === 'true' && isLead) {
+        try {
+          const salesStats = getSalesStats();
+          log('INFO', `📊 Vendas | Descoberta: ${salesStats.byStage.discovery} | Recomendação: ${salesStats.byStage.recommendation} | Fechamento: ${salesStats.byStage.closing}`);
+        } catch (err) {
+          // Ignora erro de stats
+        }
+      }
+      
     } catch (error) {
       log('WARNING', `⚠️ Erro ao gerar resposta da IA: ${error.message}`);
       
-      // Envia mensagem de erro ao usuário
+      // Mensagem de erro ao usuário
       const errorMsg = `Desculpe ${pushName}, estou com dificuldades técnicas no momento. 😅\n\nPor favor, aguarde que logo você será atendido!`;
       await sock.sendMessage(jid, { text: errorMsg }).catch(() => {});
     }
@@ -370,6 +393,9 @@ export async function handleIncomingMessage(sock, message) {
   }
 }
 
+/**
+ * Processa mensagem (wrapper)
+ */
 export async function processMessage(sock, message) {
   try {
     await handleIncomingMessage(sock, message);
@@ -381,7 +407,7 @@ export async function processMessage(sock, message) {
 }
 
 /**
- * 🔥 Reseta o cache de mensagens processadas
+ * Reseta cache de mensagens processadas
  */
 export function resetProcessedMessages() {
   processedMessages.clear();
@@ -389,7 +415,7 @@ export function resetProcessedMessages() {
 }
 
 /**
- * 🔥 Obtém estatísticas do handler
+ * Obtém estatísticas do handler
  */
 export function getHandlerStats() {
   return {
@@ -399,9 +425,91 @@ export function getHandlerStats() {
   };
 }
 
+/**
+ * 🔥 NOVO: Mostra estatísticas completas (handler + vendas)
+ */
+export function showCompleteStats() {
+  const handlerStats = getHandlerStats();
+  
+  console.log('\n📊 ╔═══════════════════════════════════════════╗');
+  console.log('📊 ESTATÍSTICAS COMPLETAS DO SISTEMA');
+  console.log('📊 ╚═══════════════════════════════════════════╝');
+  console.log('');
+  console.log('🤖 HANDLER:');
+  console.log(`   Início do Bot: ${handlerStats.botStartTime}`);
+  console.log(`   Mensagens processadas: ${handlerStats.processedMessagesCount}`);
+  console.log(`   Cache de debounce: ${handlerStats.debounceCacheSize}`);
+  console.log('');
+  
+  try {
+    const salesStats = getSalesStats();
+    console.log('💰 VENDAS:');
+    console.log(`   Total de Leads: ${salesStats.totalLeads}`);
+    console.log(`   Em Descoberta: ${salesStats.byStage.discovery}`);
+    console.log(`   Em Recomendação: ${salesStats.byStage.recommendation}`);
+    console.log(`   Com Objeção: ${salesStats.byStage.objection}`);
+    console.log(`   Em Fechamento: ${salesStats.byStage.closing}`);
+    console.log('');
+    console.log('📋 PLANOS:');
+    console.log(`   🌟 Básico: ${salesStats.byPlan.basico}`);
+    console.log(`   🚀 Completo: ${salesStats.byPlan.completo}`);
+    console.log(`   ❓ Indeciso: ${salesStats.byPlan.indeciso}`);
+    console.log(`   ➖ Nenhum: ${salesStats.byPlan.none}`);
+  } catch (err) {
+    console.log('⚠️ Não foi possível obter estatísticas de vendas');
+  }
+  
+  console.log('📊 ╚═══════════════════════════════════════════╝\n');
+}
+
+/**
+ * 🔥 NOVO: Comando para visualizar estado atual de um cliente
+ */
+export async function showClientStatus(phone) {
+  if (!phone) {
+    console.log('❌ Telefone não informado');
+    return;
+  }
+  
+  console.log(`\n👤 STATUS DO CLIENTE: ${phone}`);
+  console.log('═'.repeat(50));
+  
+  try {
+    const { getSalesContextDetails } = await import('../services/ai.js');
+    const details = getSalesContextDetails(phone);
+    
+    if (!details) {
+      console.log('❌ Cliente não encontrado no sistema');
+      return;
+    }
+    
+    console.log('📊 CONTEXTO DE VENDAS:');
+    console.log(`   Estágio: ${details.salesContext.stage}`);
+    console.log(`   Plano Recomendado: ${details.salesContext.recommendedPlan || 'Nenhum'}`);
+    console.log(`   Perguntas Feitas: ${details.salesContext.questionsAsked}`);
+    console.log(`   Plano Mencionado: ${details.salesContext.planMentioned ? 'Sim' : 'Não'}`);
+    console.log(`   Necessidades Detectadas: ${details.salesContext.detectedNeeds.length}`);
+    console.log(`   Objeções: ${details.salesContext.objections.length}`);
+    console.log('');
+    console.log('💬 HISTÓRICO:');
+    console.log(`   Total de mensagens: ${details.historySize}`);
+    console.log('   Últimas 3 mensagens:');
+    details.lastMessages.forEach((msg, idx) => {
+      console.log(`   ${idx + 1}. [${msg.role}]: ${msg.preview}`);
+    });
+    
+  } catch (err) {
+    console.log(`❌ Erro ao obter status: ${err.message}`);
+  }
+  
+  console.log('═'.repeat(50) + '\n');
+}
+
 export default {
   handleIncomingMessage,
   processMessage,
   resetProcessedMessages,
-  getHandlerStats
+  getHandlerStats,
+  showCompleteStats,
+  showClientStatus
 };
