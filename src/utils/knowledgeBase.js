@@ -772,3 +772,216 @@ Alguma dúvida?"
 ---
 
 **Lembre-se:** Você é um CONSULTOR, não um vendedor. Entenda necessidades, recomende com base nelas, seja transparente. O cliente certo no plano certo = cliente satisfeito! 🎯`;
+
+/**
+ * 🔥 Gera system prompt personalizado com nome do cliente
+ */
+export function getSystemPromptForCustomer(customerName = '') {
+  let prompt = SYSTEM_PROMPT;
+  
+  if (customerName) {
+    prompt += `\n\n**IMPORTANTE:** O nome do cliente é ${customerName}. Use o nome dele naturalmente para criar rapport e personalizar recomendações.`;
+  }
+  
+  prompt += `\n\n---\n_Prompt Version: ${PROMPT_VERSION} | Last Updated: ${LAST_UPDATED} | ${UPDATE_NOTES}_`;
+  
+  return prompt;
+}
+
+/**
+ * 🔥 Detecta qual plano recomendar baseado na mensagem
+ */
+export function detectRecommendedPlan(message) {
+  if (!message) return null;
+  
+  const msg = message.toLowerCase();
+  
+  // Contadores de sinais
+  let basicoScore = 0;
+  let completoScore = 0;
+  
+  // Verifica keywords do Básico
+  NEED_DETECTION.indica_basico.keywords.forEach(keyword => {
+    if (msg.includes(keyword)) basicoScore++;
+  });
+  
+  // Verifica keywords do Completo
+  NEED_DETECTION.indica_completo.keywords.forEach(keyword => {
+    if (msg.includes(keyword)) completoScore++;
+  });
+  
+  // Verifica keywords de indecisão
+  const isIndeciso = NEED_DETECTION.indeciso.keywords.some(keyword => 
+    msg.includes(keyword)
+  );
+  
+  if (isIndeciso) return 'indeciso';
+  if (completoScore > basicoScore) return 'completo';
+  if (basicoScore > completoScore) return 'basico';
+  
+  return null; // Precisa de mais informações
+}
+
+/**
+ * 🔥 Retorna script de vendas apropriado
+ */
+export function getSalesScript(type, subtype = null) {
+  if (!SALES_SCRIPTS[type]) return null;
+  
+  if (subtype && SALES_SCRIPTS[type][subtype]) {
+    return SALES_SCRIPTS[type][subtype];
+  }
+  
+  return SALES_SCRIPTS[type];
+}
+
+/**
+ * 🔥 Retorna comparação entre planos formatada
+ */
+export function getPlansComparison() {
+  return `🌟 **PLANO BÁSICO - R$ 299**
+${PRICING_PLANS.basico.ideal_para.map(item => `→ ${item}`).join('\n')}
+
+🚀 **PLANO COMPLETO - R$ 499**
+${PRICING_PLANS.completo.ideal_para.map(item => `→ ${item}`).join('\n')}
+
+**Recursos Comuns:**
+${PLANS_COMPARISON.recursos_comuns.slice(0, 5).map(item => `✅ ${item}`).join('\n')}
+
+**Diferenças Principais:**
+📍 Taxa entrega: ${PLANS_COMPARISON.diferencas.taxa_entrega.basico} vs ${PLANS_COMPARISON.diferencas.taxa_entrega.completo}
+🎁 Fidelização: ${PLANS_COMPARISON.diferencas.fidelizacao.basico} vs ${PLANS_COMPARISON.diferencas.fidelizacao.completo}
+📞 Suporte: ${PLANS_COMPARISON.diferencas.suporte.basico} vs ${PLANS_COMPARISON.diferencas.suporte.completo}`;
+}
+
+/**
+ * 🔥 Retorna informações detalhadas de um plano
+ */
+export function getPlanDetails(planSlug) {
+  const plan = PRICING_PLANS[planSlug];
+  if (!plan) return null;
+  
+  return {
+    nome: plan.nome,
+    valor: plan.valor_promocional,
+    economia: plan.economia,
+    ideal_para: plan.ideal_para,
+    funcionalidades: plan.funcionalidades,
+    destaque: plan.destaque
+  };
+}
+
+/**
+ * 🔥 Mensagem de encaminhamento para fanpage
+ * @returns {string}
+ */
+export function getFanpageMessage() {
+  return `
+🔗 *Acesse nossa fanpage para conhecer todos os detalhes:*
+${process.env.FANPAGE_URL || 'https://bot-whatsapp-450420.web.app/'}
+
+Lá você encontra:
+✅ Demonstração completa do bot
+✅ Fluxo real de conversação
+✅ Comparação detalhada dos planos
+✅ Formulário para solicitar teste gratuito
+
+Ou fale direto com o Roberto: ${process.env.WHATSAPP_SUPPORT || '(13) 99606-9536'}
+`.trim();
+}
+
+// 🔥 Export para compatibilidade
+export const FANPAGE_MESSAGE = getFanpageMessage();
+
+/**
+ * 🔥 Validação da base de conhecimento
+ */
+export function validateKnowledgeBase() {
+  const errors = [];
+  
+  // Valida planos
+  if (!PRICING_PLANS.basico?.valor_promocional) {
+    errors.push('Preço do Plano Básico não definido');
+  }
+  if (!PRICING_PLANS.completo?.valor_promocional) {
+    errors.push('Preço do Plano Completo não definido');
+  }
+  
+  // Valida scripts
+  if (!SALES_SCRIPTS.descoberta_necessidades) {
+    errors.push('Scripts de vendas não definidos');
+  }
+  
+  // Valida contatos
+  if (!KNOWLEDGE_BASE.contato?.whatsapp) {
+    errors.push('WhatsApp não definido');
+  }
+  if (!KNOWLEDGE_BASE.contato?.fanpage) {
+    errors.push('Fanpage não definida');
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors: errors
+  };
+}
+
+/**
+ * 🔥 Mostra resumo da base
+ */
+export function showKnowledgeSummary() {
+  console.log('\n📚 ╔═══════════════════════════════════════════╗');
+  console.log('📚 BASE DE CONHECIMENTO - RESUMO');
+  console.log('📚 ╚═══════════════════════════════════════════╝');
+  console.log(`📌 Versão: ${PROMPT_VERSION} (${UPDATE_NOTES})`);
+  console.log(`📅 Última Atualização: ${LAST_UPDATED}`);
+  console.log('');
+  console.log('💰 PLANOS DISPONÍVEIS:');
+  console.log(`   🌟 Básico: ${PRICING_PLANS.basico.valor_promocional}`);
+  console.log(`   🚀 Completo: ${PRICING_PLANS.completo.valor_promocional}`);
+  console.log('');
+  console.log(`🏢 Produto: ${KNOWLEDGE_BASE.produto.nome}`);
+  console.log(`📱 WhatsApp: ${KNOWLEDGE_BASE.contato.whatsapp}`);
+  console.log(`🌐 Fanpage: ${KNOWLEDGE_BASE.contato.fanpage}`);
+  console.log(`🎁 Instagram: ${KNOWLEDGE_BASE.promocoes.instagram.link}`);
+  console.log('');
+  
+  const validation = validateKnowledgeBase();
+  if (validation.valid) {
+    console.log('✅ Base de conhecimento validada com sucesso!');
+  } else {
+    console.log('⚠️ Problemas encontrados:');
+    validation.errors.forEach(error => {
+      console.log(`   - ${error}`);
+    });
+  }
+  
+  console.log('📚 ╚═══════════════════════════════════════════╝\n');
+}
+
+// Validação automática ao carregar
+const validation = validateKnowledgeBase();
+if (!validation.valid) {
+  console.warn('⚠️ ATENÇÃO: Problemas na base de conhecimento:');
+  validation.errors.forEach(error => console.warn(`   - ${error}`));
+}
+
+export default {
+  PRICING_PLANS,
+  PLANS_COMPARISON,
+  NEED_DETECTION,
+  SALES_SCRIPTS,
+  KNOWLEDGE_BASE,
+  SYSTEM_PROMPT,
+  FANPAGE_MESSAGE,
+  PROMPT_VERSION,
+  LAST_UPDATED,
+  UPDATE_NOTES,
+  getSystemPromptForCustomer,
+  detectRecommendedPlan,
+  getSalesScript,
+  getPlansComparison,
+  getPlanDetails,
+  validateKnowledgeBase,
+  showKnowledgeSummary
+};
