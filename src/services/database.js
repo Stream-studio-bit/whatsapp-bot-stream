@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 /**
- * CACHE DE USUÁRIOS
+ * 💾 CACHE DE USUÁRIOS
  */
 const userCache = new NodeCache({ 
   stdTTL: 0, 
@@ -52,6 +52,7 @@ export function isBlockExpired(blockedAt) {
 
 /**
  * 🔥 SALVA USUÁRIO
+ * ✨ NOVO: Inclui campos de prospecção
  */
 export async function saveUser(jid, data = {}) {
   const phone = extractPhoneNumber(jid);
@@ -70,7 +71,19 @@ export async function saveUser(jid, data = {}) {
     lastInteraction: new Date(),
     isNewLead: data.isNewLead !== undefined ? data.isNewLead : existing?.isNewLead || false,
     messageCount: (existing?.messageCount || 0) + 1,
-    blockedAt: blockedAt
+    blockedAt: blockedAt,
+    
+    // ✨ NOVOS CAMPOS DE PROSPECÇÃO
+    ownerMessageCount: data.ownerMessageCount !== undefined 
+      ? data.ownerMessageCount 
+      : existing?.ownerMessageCount || 0,
+    isOwnerProspecting: data.isOwnerProspecting !== undefined 
+      ? data.isOwnerProspecting 
+      : existing?.isOwnerProspecting || false,
+    interlocutorType: data.interlocutorType || existing?.interlocutorType || null,
+    businessSegment: data.businessSegment || existing?.businessSegment || null,
+    lastResponseTime: data.lastResponseTime || existing?.lastResponseTime || null,
+    prospectionStage: data.prospectionStage || existing?.prospectionStage || null
   };
   
   userCache.set(phone, userData);
@@ -197,9 +210,18 @@ export async function isLeadUser(jid) {
 /**
  * 🔥 BLOQUEIA BOT (Diretriz 3)
  * ⚠️ CRÍTICO: NUNCA toca no socket
+ * ✨ NOVO: Valida ownerMessageCount >= 2 antes de bloquear
  */
-export async function blockBotForUser(jid) {
+export async function blockBotForUser(jid, force = false) {
   const phone = extractPhoneNumber(jid);
+  const user = await getUser(jid);
+  
+  // ✨ VALIDAÇÃO: Só bloqueia se owner enviou >= 2 mensagens OU força bloqueio
+  if (!force && user && user.ownerMessageCount < 2) {
+    log('INFO', `⏸️ Bloqueio ignorado: owner enviou apenas ${user.ownerMessageCount} mensagem(ns) para ${phone}`);
+    return false;
+  }
+  
   const blockedAt = new Date();
   
   // 🔥 manualAttendanceCache é a FONTE ÚNICA
@@ -209,18 +231,19 @@ export async function blockBotForUser(jid) {
   });
   
   // Sincroniza userCache
-  const user = userCache.get(phone);
   if (user) {
     user.blockedAt = blockedAt;
     userCache.set(phone, user);
   }
   
-  log('WARNING', `🔒 Bot bloqueado para: ${phone}`);
+  log('WARNING', `🔒 Bot bloqueado para: ${phone} (ownerMessages: ${user?.ownerMessageCount || 0})`);
+  return true;
 }
 
 /**
  * 🔥 LIBERA BOT (Diretriz 3)
  * ⚠️ CRÍTICO: NUNCA toca no socket
+ * ✨ NOVO: Reseta contador de mensagens do owner
  */
 export async function unblockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
@@ -228,10 +251,11 @@ export async function unblockBotForUser(jid) {
   // 🔥 Remove do manualAttendanceCache
   manualAttendanceCache.del(phone);
   
-  // Sincroniza userCache
+  // Sincroniza userCache e reseta contador
   const user = userCache.get(phone);
   if (user) {
     user.blockedAt = null;
+    user.ownerMessageCount = 0; // ✨ Reseta contador
     userCache.set(phone, user);
   }
   
@@ -271,6 +295,209 @@ export function getBlockedUsers() {
     phone: key,
     ...manualAttendanceCache.get(key)
   }));
+}
+
+/**
+ * ============================================
+ * ✨ NOVAS FUNÇÕES DE PROSPECÇÃO
+ * ============================================
+ */
+
+/**
+ * ✨ INCREMENTA CONTADOR DE MENSAGENS DO OWNER
+ * Usado para decidir quando bloquear IA (após 2ª mensagem)
+ */
+export async function incrementOwnerMessageCount(jid) {
+  const phone = extractPhoneNumber(jid);
+  const user = await getUser(jid);
+  
+  if (!user) {
+    log('WARNING', `⚠️ Tentativa de incrementar contador para usuário inexistente: ${phone}`);
+    return 0;
+  }
+  
+  const newCount = (user.ownerMessageCount || 0) + 1;
+  
+  await updateUser(jid, {
+    ownerMessageCount: newCount
+  });
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `📊 Owner message count para ${phone}: ${newCount}`);
+  }
+  
+  return newCount;
+}
+
+/**
+ * ✨ REGISTRA TEMPO DE RESPOSTA
+ * Usado para detectar chatbot (respostas < 5seg) vs humano (> 30seg)
+ */
+export async function recordResponseTime(jid, timestamp = null) {
+  const phone = extractPhoneNumber(jid);
+  const user = await getUser(jid);
+  
+  if (!user) {
+    log('WARNING', `⚠️ Tentativa de registrar tempo para usuário inexistente: ${phone}`);
+    return null;
+  }
+  
+  const currentTime = timestamp || new Date();
+  const previousTime = user.lastResponseTime;
+  
+  // Calcula delta se houver tempo anterior
+  let responseTimeSeconds = null;
+  if (previousTime) {
+    const delta = currentTime - new Date(previousTime);
+    responseTimeSeconds = Math.floor(delta / 1000);
+    
+    if (process.env.DEBUG_MODE === 'true') {
+      log('INFO', `⏱️ Tempo de resposta para ${phone}: ${responseTimeSeconds}s`);
+    }
+  }
+  
+  // Atualiza timestamp
+  await updateUser(jid, {
+    lastResponseTime: currentTime
+  });
+  
+  return responseTimeSeconds;
+}
+
+/**
+ * ✨ MARCA INÍCIO DE PROSPECÇÃO PELO OWNER
+ */
+export async function markOwnerProspecting(jid, isProspecting = true) {
+  const phone = extractPhoneNumber(jid);
+  
+  await updateUser(jid, {
+    isOwnerProspecting: isProspecting,
+    ownerMessageCount: 0 // Reseta contador ao iniciar prospecção
+  });
+  
+  if (isProspecting) {
+    log('SUCCESS', `🎯 Prospecção iniciada pelo owner: ${phone}`);
+  } else {
+    log('INFO', `📴 Prospecção desativada para: ${phone}`);
+  }
+}
+
+/**
+ * ✨ ATUALIZA INFORMAÇÕES DE PROSPECÇÃO
+ */
+export async function updateProspectionInfo(jid, info = {}) {
+  const phone = extractPhoneNumber(jid);
+  const user = await getUser(jid);
+  
+  if (!user) {
+    log('WARNING', `⚠️ Tentativa de atualizar prospecção para usuário inexistente: ${phone}`);
+    return null;
+  }
+  
+  const updates = {};
+  
+  if (info.interlocutorType) {
+    updates.interlocutorType = info.interlocutorType;
+    log('INFO', `👤 Interlocutor identificado para ${phone}: ${info.interlocutorType}`);
+  }
+  
+  if (info.businessSegment) {
+    updates.businessSegment = info.businessSegment;
+    log('INFO', `🏢 Segmento identificado para ${phone}: ${info.businessSegment}`);
+  }
+  
+  if (info.prospectionStage) {
+    updates.prospectionStage = info.prospectionStage;
+    log('INFO', `📊 Estágio de prospecção para ${phone}: ${info.prospectionStage}`);
+  }
+  
+  return await updateUser(jid, updates);
+}
+
+/**
+ * ✨ OBTÉM ESTATÍSTICAS DE PROSPECÇÃO
+ */
+export function getProspectionStats() {
+  const allUsers = userCache.keys();
+  
+  let activeProspections = 0;
+  let stageStats = {
+    qualification: 0,
+    discovery: 0,
+    presentation: 0,
+    demonstration: 0,
+    handoff: 0
+  };
+  let segmentStats = {};
+  let interlocutorStats = {
+    chatbot: 0,
+    atendente: 0,
+    decisor: 0,
+    unknown: 0
+  };
+  
+  allUsers.forEach(phone => {
+    const user = userCache.get(phone);
+    
+    if (user.isOwnerProspecting) {
+      activeProspections++;
+    }
+    
+    if (user.prospectionStage && stageStats[user.prospectionStage] !== undefined) {
+      stageStats[user.prospectionStage]++;
+    }
+    
+    if (user.businessSegment) {
+      segmentStats[user.businessSegment] = (segmentStats[user.businessSegment] || 0) + 1;
+    }
+    
+    if (user.interlocutorType) {
+      const type = user.interlocutorType;
+      if (interlocutorStats[type] !== undefined) {
+        interlocutorStats[type]++;
+      }
+    } else if (user.isOwnerProspecting) {
+      interlocutorStats.unknown++;
+    }
+  });
+  
+  return {
+    activeProspections,
+    stageStats,
+    segmentStats,
+    interlocutorStats
+  };
+}
+
+/**
+ * ✨ LISTA CONVERSAS DO OWNER
+ */
+export function listOwnerConversations() {
+  const allUsers = userCache.keys();
+  const ownerConversations = [];
+  
+  allUsers.forEach(phone => {
+    const user = userCache.get(phone);
+    
+    if (user.ownerMessageCount > 0 || user.isOwnerProspecting) {
+      const manualAttendance = manualAttendanceCache.get(phone);
+      const isBlocked = manualAttendance && !isBlockExpired(manualAttendance.blockedAt);
+      
+      ownerConversations.push({
+        phone: user.phone,
+        name: user.name,
+        ownerMessageCount: user.ownerMessageCount,
+        isOwnerProspecting: user.isOwnerProspecting,
+        isBlocked: isBlocked,
+        blockedAt: isBlocked ? manualAttendance.blockedAt : null,
+        interlocutorType: user.interlocutorType,
+        businessSegment: user.businessSegment,
+        prospectionStage: user.prospectionStage
+      });
+    }
+  });
+  
+  return ownerConversations;
 }
 
 /**
@@ -377,12 +604,15 @@ export function exportData() {
     users: getAllUsers(),
     blockedUsers: getBlockedUsers(),
     stats: getStats(),
+    prospectionStats: getProspectionStats(),
+    ownerConversations: listOwnerConversations(),
     exportedAt: new Date().toISOString()
   };
 }
 
 export function printStats() {
   const stats = getStats();
+  const prospection = getProspectionStats();
   
   console.log('\n📊 ╔═══════════════════════════════════════╗');
   console.log('📊 ESTATÍSTICAS DO BOT');
@@ -391,6 +621,30 @@ export function printStats() {
   console.log(`🎯 Novos leads: ${stats.newLeads}`);
   console.log(`🔄 Clientes recorrentes: ${stats.returningClients}`);
   console.log(`🚫 Em atendimento manual: ${stats.usersInManualAttendance}`);
+  
+  console.log('\n📊 ╔═══════════════════════════════════════╗');
+  console.log('📊 PROSPECÇÃO ATIVA');
+  console.log('📊 ╚═══════════════════════════════════════╝');
+  console.log(`🎯 Prospecções ativas: ${prospection.activeProspections}`);
+  console.log(`📊 Por estágio:`);
+  console.log(`   • Qualificação: ${prospection.stageStats.qualification}`);
+  console.log(`   • Descoberta: ${prospection.stageStats.discovery}`);
+  console.log(`   • Apresentação: ${prospection.stageStats.presentation}`);
+  console.log(`   • Demonstração: ${prospection.stageStats.demonstration}`);
+  console.log(`   • Transferência: ${prospection.stageStats.handoff}`);
+  
+  if (Object.keys(prospection.segmentStats).length > 0) {
+    console.log(`\n🏢 Por segmento:`);
+    Object.entries(prospection.segmentStats).forEach(([segment, count]) => {
+      console.log(`   • ${segment}: ${count}`);
+    });
+  }
+  
+  console.log(`\n👤 Por tipo de interlocutor:`);
+  console.log(`   • Chatbot: ${prospection.interlocutorStats.chatbot}`);
+  console.log(`   • Atendente: ${prospection.interlocutorStats.atendente}`);
+  console.log(`   • Decisor: ${prospection.interlocutorStats.decisor}`);
+  console.log(`   • Desconhecido: ${prospection.interlocutorStats.unknown}`);
   console.log('📊 ╚═══════════════════════════════════════╝\n');
 }
 
@@ -445,5 +699,12 @@ export default {
   clearAllCache,
   exportData,
   printStats,
-  saveConversationHistory
+  saveConversationHistory,
+  // ✨ Novas funções de prospecção
+  incrementOwnerMessageCount,
+  recordResponseTime,
+  markOwnerProspecting,
+  updateProspectionInfo,
+  getProspectionStats,
+  listOwnerConversations
 };

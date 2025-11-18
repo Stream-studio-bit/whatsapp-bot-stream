@@ -4,402 +4,867 @@ dotenv.config();
 
 /**
  * 🔥 VERSÃO DO PROMPT
- * Útil para rastrear mudanças e rollback se necessário
  */
-export const PROMPT_VERSION = '3.0.0';
-export const LAST_UPDATED = '2025-02-10';
-export const UPDATE_NOTES = 'Sistema de vendas consultivas com dois planos de preços';
+export const PROMPT_VERSION = '4.0.0';
+export const LAST_UPDATED = '2025-02-18';
+export const UPDATE_NOTES = 'Sistema de prospecção ativa B2B com detecção de interlocutor';
 
 /**
- * 💰 SISTEMA DE PLANOS - NOVIDADE!
- * Dois planos com funcionalidades diferentes
+ * 💰 MODELO DE PRECIFICAÇÃO COM INDICAÇÕES
  */
-export const PRICING_PLANS = {
-  basico: {
-    nome: "Plano Básico",
-    valor_original: "R$ 500,00",
-    valor_promocional: "R$ 299,00",
-    economia: "R$ 201,00",
-    slug: "basico",
-    ideal_para: [
-      "Negócios iniciando no delivery",
-      "Baixo volume de pedidos (até 50/dia)",
-      "Orçamento limitado",
-      "Quer testar automação antes de investir mais",
-      "Não precisa de funcionalidades avançadas"
-    ],
-    funcionalidades: [
-      "✅ Atendimento automatizado 24/7",
-      "✅ IA integrada (GROQ gratuita)",
-      "✅ Cardápio digital editável",
-      "✅ Carrinho de compras automático",
-      "✅ Cálculo de valores automático",
-      "✅ Checkout de pagamento (Dinheiro, Cartão, PIX)",
-      "✅ Configuração via painel visual",
-      "✅ 15 dias de suporte técnico",
-      "⚠️ Taxa de entrega ÚNICA (sem configuração por bairro)",
-      "⚠️ SEM sistema de cupons/cashback",
-      "⚠️ SEM função Meio a Meio",
-      "⚠️ SEM reconhecimento de endereço recorrente"
-    ],
-    destaque: "🌟 Melhor custo-benefício para começar!"
-  },
+export const PRICING_MODEL = {
+  valor_base: "R$ 499,00",
+  valor_com_indicacao: "R$ 199,00",
+  cashback: "R$ 300,00",
+  pagamento: "Único (sem mensalidades)",
   
-  completo: {
-    nome: "Plano Completo",
-    valor_original: "R$ 900,00",
-    valor_promocional: "R$ 499,00",
-    economia: "R$ 401,00",
-    slug: "completo",
-    ideal_para: [
-      "Negócios estabelecidos no delivery",
-      "Alto volume de pedidos (50+ por dia)",
-      "Quer maximizar fidelização de clientes",
-      "Precisa de controle avançado por região",
-      "Quer funcionalidades premium"
-    ],
-    funcionalidades: [
-      "✅ TUDO do Plano Básico +",
-      "✅ Taxa de entrega POR BAIRRO (configurável)",
-      "✅ Sistema de CUPONS DE DESCONTO",
-      "✅ Sistema de CASHBACK automático",
-      "✅ Função MEIO A MEIO para pizzas",
-      "✅ Reconhecimento de ENDEREÇO RECORRENTE",
-      "✅ Painel administrativo AVANÇADO",
-      "✅ 30 dias de suporte técnico (dobro)",
-      "✅ Prioridade em atualizações futuras",
-      "✅ Customizações exclusivas"
-    ],
-    destaque: "🚀 Solução profissional completa!"
-  }
-};
-
-/**
- * 📊 COMPARAÇÃO DIRETA ENTRE PLANOS
- */
-export const PLANS_COMPARISON = {
-  recursos_comuns: [
-    "Atendimento automatizado 24/7",
-    "IA integrada conversando com cliente",
-    "Cardápio digital editável em tempo real",
-    "Carrinho com cálculo automático",
-    "Checkout de pagamento integrado",
-    "Painel administrativo visual",
-    "Roda no seu computador (sem VPS)",
-    "Não precisa saber programar",
-    "Pagamento único, SEM mensalidades"
+  como_funciona: [
+    "Valor inicial: R$ 499,00 (pagamento único)",
+    "Cliente indica 5 amigos interessados",
+    "Cada indicado deve ADQUIRIR e PAGAR o sistema",
+    "Após 5ª confirmação → Cashback de R$ 300,00",
+    "Valor final efetivo: R$ 199,00"
   ],
   
-  diferencas: {
-    taxa_entrega: {
-      basico: "Taxa única para todos os bairros",
-      completo: "Taxa configurável POR BAIRRO"
-    },
-    fidelizacao: {
-      basico: "Não incluído",
-      completo: "Cupons de desconto + Cashback automático"
-    },
-    meio_a_meio: {
-      basico: "Não disponível",
-      completo: "Função exclusiva para pizzarias"
-    },
-    endereco_recorrente: {
-      basico: "Cliente informa sempre",
-      completo: "Sistema reconhece e sugere automaticamente"
-    },
-    suporte: {
-      basico: "15 dias de suporte técnico",
-      completo: "30 dias de suporte técnico"
-    },
-    atualizacoes: {
-      basico: "Atualizações de segurança",
-      completo: "Prioridade em novas funcionalidades"
-    }
+  validacao_indicacoes: {
+    quantidade_minima: 5,
+    requisitos: [
+      "Fornecer lista com 5 contatos (nome + telefone)",
+      "Sistema cria campanha de indicação linkada ao cliente",
+      "Cada indicado recebe código único do indicador",
+      "Pagamento validado após confirmação de cada indicado",
+      "Cashback liberado automaticamente após 5ª confirmação"
+    ]
   },
   
-  investimento: {
-    basico: {
-      valor: "R$ 299,00",
-      economia: "R$ 201,00",
-      roi_estimado: "Retorno em ~30 dias com 5 pedidos/dia a mais"
-    },
-    completo: {
-      valor: "R$ 499,00",
-      economia: "R$ 401,00",
-      roi_estimado: "Retorno em ~45 dias com fidelização e upsell"
-    }
-  }
+  transparencia: [
+    "Explicar claramente o processo completo",
+    "NÃO prometer cashback imediato",
+    "Deixar claro que depende da adesão dos indicados",
+    "Sugerir indicar pessoas REALMENTE interessadas",
+    "Mencionar que é investimento único, sem mensalidades"
+  ]
 };
 
 /**
- * 🎯 SISTEMA DE DETECÇÃO DE NECESSIDADES
- * Palavras-chave que indicam qual plano recomendar
+ * 🖥️ SERVIDOR LOCAL VS 24/7
  */
-export const NEED_DETECTION = {
-  indica_basico: {
-    keywords: [
-      "começando", "iniciando", "novo", "pequeno", "teste",
-      "barato", "econômico", "básico", "simples", "orçamento",
-      "poucos pedidos", "começar", "experimentar", "testar"
-    ],
-    sinais: [
-      "Orçamento limitado mencionado",
-      "Primeira vez com automação",
-      "Quer testar antes de investir mais",
-      "Negócio pequeno ou iniciante",
-      "Não mencionou necessidades avançadas"
+export const HOSTING_OPTIONS = {
+  local: {
+    nome: "Servidor Local (Padrão)",
+    funcionamento: "IA roda no computador do cliente",
+    disponibilidade: "Liga e desliga com o PC",
+    custo: "Incluído no preço (R$ 499)",
+    ideal_para: "Quem já deixa PC ligado ou tem horário comercial fixo",
+    vantagens: [
+      "Sem custos adicionais",
+      "Instalação imediata",
+      "Controle total local"
     ]
   },
   
-  indica_completo: {
-    keywords: [
-      "pizzaria", "fidelizar", "cashback", "cupom", "bairro",
-      "recorrente", "completo", "profissional", "avançado",
-      "muitos pedidos", "crescendo", "expandindo", "competir"
+  nuvem_24x7: {
+    nome: "Servidor 24/7 (Opcional)",
+    funcionamento: "IA roda em servidor remoto",
+    disponibilidade: "Funciona 24 horas, 7 dias por semana",
+    custo: "R$ 150,00 (configuração única)",
+    ideal_para: "Delivery 24h ou máxima disponibilidade",
+    vantagens: [
+      "Não precisa manter computador ligado",
+      "IA sempre disponível",
+      "Suporte técnico para setup"
     ],
-    sinais: [
-      "Pizzaria (precisa meio a meio)",
-      "Mencionou fidelização de clientes",
-      "Falou sobre diferentes bairros",
-      "Quer funcionalidades premium",
-      "Negócio estabelecido",
-      "Alto volume de pedidos"
-    ]
-  },
-  
-  indeciso: {
-    keywords: [
-      "diferença", "comparar", "melhor", "vale a pena", "dúvida",
-      "qual escolher", "não sei", "ajuda escolher"
-    ],
-    sinais: [
-      "Perguntou sobre diferenças",
-      "Está comparando planos",
-      "Não definiu necessidades claras"
+    quando_mencionar: [
+      "Cliente perguntar sobre disponibilidade 24/7",
+      "Cliente mencionar que não pode deixar PC ligado",
+      "Cliente demonstrar interesse em funcionamento contínuo"
     ]
   }
 };
 
 /**
- * 💬 SCRIPTS DE VENDAS CONSULTIVAS
+ * 🏢 SEGMENTOS DE NEGÓCIO
  */
-export const SALES_SCRIPTS = {
-  descoberta_necessidades: {
-    perguntas_iniciais: [
-      "Para te indicar o plano ideal, me conta: seu delivery já está em funcionamento ou está começando agora?",
-      "Quantos pedidos você recebe por dia em média?",
-      "Você trabalha com pizzas ou tem interesse em função meio a meio?",
-      "Você faz entregas em vários bairros com taxas diferentes?",
-      "Já tem algum sistema de fidelização (cupons, cashback)?",
-      "Qual seu principal objetivo com o bot? Automatizar atendimento ou também fidelizar clientes?"
+export const BUSINESS_SEGMENTS = {
+  restaurante_delivery: {
+    nome: "Restaurantes / Delivery",
+    keywords: ["restaurante", "delivery", "comida", "pedidos", "cardápio", "entrega", "marmita"],
+    dores: [
+      "Perda de pedidos fora do horário comercial",
+      "Atendentes ocupados = clientes desistem",
+      "Erro em anotação de pedidos",
+      "Dificuldade em calcular valores rapidamente"
     ],
-    
-    resposta_basico: `Perfeito! Pelo que você me contou, o **Plano Básico (R$ 299)** é ideal para o seu momento! 🎯
-
-Ele tem tudo que você precisa para automatizar:
-✅ Atendimento 24/7 com IA
-✅ Cardápio digital editável
-✅ Carrinho e checkout automático
-✅ Cálculo de valores
-
-É o melhor custo-benefício para começar! E se seu delivery crescer, você pode fazer upgrade depois. 😊`,
-
-    resposta_completo: `Ótimo! Pelo perfil do seu negócio, recomendo o **Plano Completo (R$ 499)** 🚀
-
-Você vai aproveitar:
-✅ Taxa de entrega por bairro (essencial para você!)
-✅ Sistema de cupons e cashback (fidelização)
-✅ Função meio a meio [se pizzaria]
-✅ Endereço recorrente dos clientes
-✅ 30 dias de suporte (dobro do básico)
-
-São R$ 200 a mais que o básico, mas com funcionalidades que vão te dar retorno rápido!`,
-
-    resposta_indeciso: `Vou te ajudar a escolher! 😊
-
-**🌟 Plano Básico (R$ 299)**
-→ Se está começando ou tem orçamento limitado
-→ Precisa só de automação básica
-→ Até ~50 pedidos/dia
-
-**🚀 Plano Completo (R$ 499)**
-→ Se já tem volume de pedidos
-→ Quer fidelizar clientes (cupons/cashback)
-→ Precisa de controle por bairro
-→ Trabalha com pizzas (meio a meio)
-
-Qual cenário se encaixa melhor no seu negócio?`
-  },
-  
-  objecoes: {
-    preco_alto: {
-      basico: "Entendo! Por isso temos o Plano Básico por R$ 299. É menos que uma diária de motoboy! E você economiza R$ 30-100/mês sem precisar de VPS. Se paga em menos de 1 mês! 💰",
-      completo: "Veja por esse lado: R$ 499 pagamento ÚNICO, sem mensalidades. Você economiza R$ 30-100/mês de VPS + tempo de atendente. Em 2-3 meses já se pagou! E os recursos de fidelização (cupons/cashback) aumentam seu ticket médio. 📈"
-    },
-    
-    comparacao_concorrentes: "Diferente de outros bots que cobram mensalidade, aqui é pagamento ÚNICO! Não tem VPS (economiza R$ 30-100/mês), não tem mensalidade da IA (GROQ é grátis), e você tem suporte incluído. Faça as contas: em 6 meses você já economizou mais que o investimento inicial! 🎯",
-    
-    diferenca_planos: "A diferença principal está nas funcionalidades avançadas:\n\n🌟 Básico: Automação essencial por R$ 299\n🚀 Completo: Automação + Fidelização + Controle avançado por R$ 499\n\nSe seu foco é COMEÇAR a automatizar → Básico\nSe seu foco é MAXIMIZAR resultados → Completo\n\nComeçando do zero? Básico é perfeito! Já tem volume? Completo compensa! 😊",
-    
-    duvida_funcionalidade: "Ótima pergunta! Deixa eu explicar melhor essa funcionalidade...\n\n[A IA deve explicar de forma clara e dar exemplo prático]\n\nIsso esclarece? Ou quer que eu entre em mais detalhes? 🤓"
-  },
-  
-  upsell_basico_para_completo: {
-    quando_oferecer: [
-      "Cliente escolheu Básico mas mencionou pizzaria",
-      "Cliente falou sobre vários bairros",
-      "Cliente mencionou concorrência forte",
-      "Cliente quer fidelizar clientes"
+    beneficios: [
+      "IA anota pedidos completos automaticamente",
+      "Mostra cardápio digital atualizado",
+      "Calcula valor + taxa de entrega instantaneamente",
+      "Confirma endereço sem erros",
+      "Funciona 24/7, mesmo de madrugada"
     ],
+    pitch: `Imagina um Agente IA que:
+✅ Mostra seu cardápio automaticamente
+✅ Anota pedidos completos sozinho
+✅ Calcula valor + taxa de entrega
+✅ Confirma endereço e agenda entrega
+✅ Tudo sem você precisar ficar no WhatsApp!
+
+Seus clientes pedem sozinhos, você só produz e entrega 🍕📦`,
     
-    script: `Vi que você escolheu o Plano Básico, que é ótimo! 👍
-
-Mas como você mencionou [RAZÃO ESPECÍFICA], queria te mostrar algo:
-
-No Plano Completo (apenas R$ 200 a mais) você teria:
-✅ [FUNCIONALIDADE QUE ELE PRECISA]
-✅ [OUTRA FUNCIONALIDADE RELEVANTE]
-
-Isso pode te ajudar a [BENEFÍCIO CONCRETO] e se pagar rapidinho!
-
-Vale a pena dar uma olhada? Ou prefere começar com o Básico mesmo? 😊`
+    exemplo_automacao: "Cliente: 'Quero um X-Burger' → IA: 'Ótimo! X-Burger R$ 25. Qual o endereço?' → Cliente informa → IA: 'Taxa R$ 5. Total R$ 30. Confirma?' → Pedido fechado!"
   },
   
-  fechamento: {
-    basico: `Excelente escolha! O Plano Básico (R$ 299) vai transformar seu atendimento! 🎉
+  advocacia: {
+    nome: "Escritórios de Advocacia",
+    keywords: ["advogado", "escritório", "jurídico", "causas", "consulta", "advocacia", "direito"],
+    dores: [
+      "Perda de tempo com triagem inicial",
+      "Ligações fora do horário comercial",
+      "Dificuldade em agendar consultas",
+      "Clientes querendo informações básicas"
+    ],
+    beneficios: [
+      "Faz triagem inicial de casos automaticamente",
+      "Agenda consultas sem intervenção",
+      "Responde dúvidas frequentes 24/7",
+      "Coleta informações preliminares",
+      "Libera advogado para focar no jurídico"
+    ],
+    pitch: `Imagina um Agente IA que:
+✅ Faz triagem inicial de casos
+✅ Agenda consultas automaticamente
+✅ Responde dúvidas frequentes
+✅ Coleta informações preliminares
+✅ Libera você para focar no que importa: advocacia!
 
-**Próximos passos:**
-1️⃣ Acesse nossa fanpage: https://bot-whatsapp-450420.web.app/
-2️⃣ Veja a demonstração completa
-3️⃣ Preencha o formulário de solicitação
-4️⃣ Receba o sistema em até 24h
-5️⃣ Teste GRÁTIS antes de pagar!
+Clientes bem atendidos, você mais produtivo ⚖️📋`,
+    
+    exemplo_automacao: "Cliente: 'Preciso de advogado' → IA: 'Qual a área? Trabalhista, Civil, Criminal?' → Cliente: 'Trabalhista' → IA: 'Agenda consulta para quando?' → Triagem feita!"
+  },
+  
+  floricultura_ecommerce: {
+    nome: "Floriculturas / E-commerce",
+    keywords: ["flores", "floricultura", "loja", "produtos", "catálogo", "vendas", "arranjo", "buquê"],
+    dores: [
+      "Perda de vendas fora do horário",
+      "Cliente quer ver opções antes de comprar",
+      "Dificuldade em calcular frete rapidamente",
+      "Datas especiais = sobrecarga de atendimento"
+    ],
+    beneficios: [
+      "Mostra catálogo de produtos automaticamente",
+      "Sugere arranjos para ocasiões especiais",
+      "Calcula valor com frete instantaneamente",
+      "Agenda entregas sem erros",
+      "Funciona 24/7, inclusive finais de semana"
+    ],
+    pitch: `Imagina um Agente IA que:
+✅ Mostra seu catálogo de produtos
+✅ Sugere arranjos para ocasiões especiais
+✅ Calcula valor com frete
+✅ Agenda entregas
+✅ Responde 24/7, inclusive finais de semana!
 
-🎁 BÔNUS: Like no Instagram e ganhe +3 meses de suporte!
+Suas vendas não param, mesmo quando você está offline 🌹💐`,
+    
+    exemplo_automacao: "Cliente: 'Quero flores para aniversário' → IA: 'Temos buquês R$ 50, R$ 80, R$ 120. Qual prefere?' → Cliente escolhe → IA: 'Entrega para qual CEP?' → Venda fechada!"
+  },
+  
+  clinica_consultorio: {
+    nome: "Clínicas / Consultórios",
+    keywords: ["clínica", "consultório", "médico", "dentista", "fisioterapia", "psicólogo", "consulta", "agendamento"],
+    dores: [
+      "Ligações perdidas fora do horário",
+      "Remarcações constantes",
+      "Confirmação manual de consultas",
+      "Pacientes querendo horários disponíveis"
+    ],
+    beneficios: [
+      "Agenda consultas automaticamente",
+      "Envia lembretes de consultas",
+      "Permite remarcação sem ligação",
+      "Mostra horários disponíveis em tempo real",
+      "Coleta histórico médico preliminar"
+    ],
+    pitch: `Imagina um Agente IA que:
+✅ Agenda consultas automaticamente
+✅ Envia lembretes aos pacientes
+✅ Permite remarcação pelo WhatsApp
+✅ Mostra horários disponíveis
+✅ Reduz faltas e otimiza sua agenda!
 
-Alguma dúvida antes de solicitar?`,
+Consultório organizado, pacientes satisfeitos 🏥📅`,
+    
+    exemplo_automacao: "Paciente: 'Quero marcar consulta' → IA: 'Temos vagas terça 14h ou quinta 16h' → Paciente escolhe → IA: 'Agendado! Lembrarei você 1 dia antes' → Confirmado!"
+  },
+  
+  varejo_loja: {
+    nome: "Varejo / Lojas Físicas",
+    keywords: ["loja", "varejo", "venda", "produto", "estoque", "preço", "promoção"],
+    dores: [
+      "Cliente quer saber preço antes de ir à loja",
+      "Perguntas sobre disponibilidade de produtos",
+      "Horário de funcionamento constantemente perguntado",
+      "Promoções não chegam aos clientes"
+    ],
+    beneficios: [
+      "Informa preços e disponibilidade instantaneamente",
+      "Divulga promoções automaticamente",
+      "Reserva produtos para retirada",
+      "Envia localização da loja",
+      "Atende dúvidas 24/7"
+    ],
+    pitch: `Imagina um Agente IA que:
+✅ Informa preços e disponibilidade
+✅ Divulga suas promoções
+✅ Reserva produtos para retirada
+✅ Envia localização da loja
+✅ Atende clientes mesmo quando você está fechado!
 
-    completo: `Perfeita escolha! O Plano Completo (R$ 499) é nossa solução premium! 🚀
+Mais vendas, menos trabalho manual 🛍️💳`,
+    
+    exemplo_automacao: "Cliente: 'Tem aquele tênis azul?' → IA: 'Sim! R$ 120. Tamanho?' → Cliente: '42' → IA: 'Temos! Quer reservar para retirada?' → Venda garantida!"
+  },
+  
+  servicos_gerais: {
+    nome: "Serviços Gerais",
+    keywords: ["serviço", "manutenção", "reforma", "encanador", "eletricista", "pintor", "limpeza"],
+    dores: [
+      "Perda de orçamentos fora do horário",
+      "Dificuldade em explicar serviços",
+      "Cliente quer orçamento rápido",
+      "Agendamento de visitas demorado"
+    ],
+    beneficios: [
+      "Coleta informações para orçamento automático",
+      "Explica serviços oferecidos",
+      "Agenda visitas técnicas",
+      "Envia portfólio de trabalhos anteriores",
+      "Responde 24/7"
+    ],
+    pitch: `Imagina um Agente IA que:
+✅ Coleta informações para orçamento
+✅ Explica seus serviços
+✅ Agenda visitas técnicas
+✅ Envia portfólio de trabalhos
+✅ Capta clientes mesmo de madrugada!
 
-**Próximos passos:**
-1️⃣ Acesse nossa fanpage: https://bot-whatsapp-450420.web.app/
-2️⃣ Veja a demonstração completa
-3️⃣ Preencha o formulário de solicitação
-4️⃣ Receba o sistema em até 24h
-5️⃣ Teste GRÁTIS antes de pagar!
-
-🎁 BÔNUS EXCLUSIVO:
-→ Like no Instagram = +3 meses de suporte
-→ Vídeo do bot = Hospedagem na nuvem GRÁTIS
-
-Alguma dúvida antes de solicitar?`
+Mais orçamentos, mais serviços fechados 🔧🏗️`,
+    
+    exemplo_automacao: "Cliente: 'Preciso de encanador' → IA: 'Qual o problema?' → Cliente explica → IA: 'Orçamento estimado R$ 150. Visita quando?' → Serviço agendado!"
   }
 };
 
 /**
- * 📚 BASE DE CONHECIMENTO - INFORMAÇÕES GERAIS
+ * 👤 DETECÇÃO DE INTERLOCUTOR
+ */
+export const INTERLOCUTOR_DETECTION = {
+  chatbot: {
+    nome: "Chatbot Automatizado",
+    sinais_temporais: "Resposta em menos de 5 segundos",
+    sinais_conteudo: [
+      "Mensagens com menus numerados",
+      "Contém 'digite', 'escolha uma opção'",
+      "Padrões repetitivos",
+      "Respostas instantâneas e robóticas"
+    ],
+    abordagem: `Percebi que você é um sistema automatizado 😊
+
+Poderia me direcionar para o setor comercial ou responsável? 
+
+Tenho uma proposta sobre *Agentes IA para WhatsApp* que pode interessar sua empresa!`,
+    
+    estrategia: [
+      "Identificar-se educadamente",
+      "Pedir para falar com humano",
+      "Mencionar 'setor comercial' ou 'responsável'",
+      "Ser paciente e aguardar direcionamento"
+    ]
+  },
+  
+  atendente: {
+    nome: "Atendente Humano",
+    sinais_temporais: "Resposta entre 10-30 segundos",
+    sinais_conteudo: [
+      "Mensagens contendo 'aguarde', 'vou transferir'",
+      "Linguagem natural e humanizada",
+      "Perguntas contextuais",
+      "Demonstra compreensão da conversa"
+    ],
+    abordagem: `Oi! Qual seu nome? 😊
+
+Seria possível falar com o responsável ou dono? 
+
+É sobre uma solução de *IA para WhatsApp* que pode automatizar o atendimento de vocês!`,
+    
+    estrategia: [
+      "Criar rapport perguntando o nome",
+      "Ser educado e cordial",
+      "Explicar brevemente o motivo",
+      "Pedir para conectar com decisor",
+      "Agradecer a ajuda"
+    ]
+  },
+  
+  decisor: {
+    nome: "Decisor / Dono",
+    sinais_temporais: "Resposta > 30 segundos (pessoa ocupada)",
+    sinais_conteudo: [
+      "Mensagens contendo 'sou o dono', 'tomo decisões'",
+      "Perguntas diretas sobre preço/produto",
+      "Autoridade no tom",
+      "Interesse imediato ou objeções fundamentadas"
+    ],
+    abordagem: `Perfeito! 🎯
+
+Me conta: qual o segmento do seu negócio?
+
+Vou te mostrar como nossa IA pode automatizar seu atendimento no WhatsApp e trazer resultados concretos!`,
+    
+    estrategia: [
+      "Partir direto para descoberta",
+      "Fazer perguntas de qualificação",
+      "Identificar segmento rapidamente",
+      "Apresentar solução adaptada",
+      "Focar em benefícios e ROI"
+    ]
+  }
+};
+
+/**
+ * 📊 ESTÁGIOS DE PROSPECÇÃO
+ */
+export const PROSPECTION_STAGES = {
+  qualification: {
+    nome: "Qualificação",
+    objetivo: "Identificar tipo de interlocutor e permissão para conversar",
+    perguntas_chave: [
+      "Você é o responsável?",
+      "Seria possível falar com o dono?",
+      "Qual seu nome?"
+    ],
+    proximo_estagio: "discovery"
+  },
+  
+  discovery: {
+    nome: "Descoberta",
+    objetivo: "Identificar segmento, dores e necessidades",
+    perguntas_chave: [
+      "Qual é o segmento de vocês?",
+      "Quantos atendimentos fazem por dia?",
+      "Qual a maior dificuldade no atendimento atual?",
+      "Já pensou em automatizar?"
+    ],
+    proximo_estagio: "presentation"
+  },
+  
+  presentation: {
+    nome: "Apresentação",
+    objetivo: "Apresentar solução adaptada ao segmento identificado",
+    abordagem: "Usar pitch específico do segmento detectado",
+    proximo_estagio: "demonstration"
+  },
+  
+  demonstration: {
+    nome: "Demonstração",
+    objetivo: "Oferecer teste gratuito via fanpage",
+    call_to_action: "Convidar para acessar fanpage e ver demonstração",
+    proximo_estagio: "pricing"
+  },
+  
+  pricing: {
+    nome: "Precificação",
+    objetivo: "Explicar investimento e programa de indicações",
+    informacoes: [
+      "Valor base: R$ 499,00",
+      "Programa de indicações: 5 amigos = cashback R$ 300",
+      "Valor final efetivo: R$ 199,00",
+      "Servidor local incluído",
+      "Upgrade 24/7: R$ 150,00 (opcional)"
+    ],
+    proximo_estagio: "handoff"
+  },
+  
+  handoff: {
+    nome: "Transferência",
+    objetivo: "Transferir para atendimento humano quando solicitado",
+    gatilhos: [
+      "Cliente pede para falar com pessoa",
+      "Cliente menciona 'atendente humano'",
+      "Cliente diz 'não quero robô'",
+      "Cliente quer fechar negócio"
+    ]
+  }
+};
+
+/**
+ * 🎯 SYSTEM PROMPT - PROSPECÇÃO ATIVA
+ */
+export const SYSTEM_PROMPT = `Você é um *Agente IA de Prospecção B2B* da Stream Studio.
+
+## 🎯 MISSÃO
+Conduzir conversas de vendas consultivas, identificando interlocutores, adaptando-se a diferentes segmentos e oferecendo soluções de IA para WhatsApp.
+
+## 🤖 IDENTIDADE
+**SEMPRE se apresente como Agente IA logo no início:**
+"Olá! 👋 Sou um *Agente IA* da Stream Studio e vim trazer uma proposta interessante para vocês!"
+
+## 📋 METODOLOGIA DE PROSPECÇÃO
+
+### ESTÁGIO 1: QUALIFICAÇÃO
+**Objetivo:** Identificar com quem está falando
+
+**Se resposta < 5 segundos = CHATBOT:**
+"Percebi que você é um sistema automatizado 😊 Poderia me direcionar para o setor comercial? Tenho proposta sobre *Agentes IA para WhatsApp*!"
+
+**Se resposta 10-30 segundos = ATENDENTE:**
+"Oi! Qual seu nome? 😊 Poderia me conectar com o responsável? É sobre implementação de IA no WhatsApp de vocês 🤖"
+
+**Se resposta > 30 segundos OU indica ser decisor:**
+Partir direto para DISCOVERY
+
+### ESTÁGIO 2: DISCOVERY
+**Objetivo:** Identificar segmento e necessidades
+
+**Perguntas-chave:**
+- "Qual é o segmento de vocês?"
+- "Quantos atendimentos fazem por dia no WhatsApp?"
+- "Qual a maior dificuldade no atendimento atual?"
+
+**Detectar segmento por palavras-chave:**
+- Restaurante/Delivery: "comida", "delivery", "pedidos"
+- Advocacia: "advogado", "jurídico", "causas"
+- Floricultura: "flores", "arranjos", "buquê"
+- Clínica: "consultas", "médico", "agendamento"
+- Varejo: "loja", "produtos", "vendas"
+- Serviços: "manutenção", "reforma", "orçamento"
+
+### ESTÁGIO 3: PRESENTATION
+**Objetivo:** Apresentar solução adaptada ao segmento
+
+**Estrutura do Pitch:**
+"Perfeito! Para [SEGMENTO] como vocês, imagina um Agente IA que:
+✅ [Benefício específico 1]
+✅ [Benefício específico 2]
+✅ [Benefício específico 3]
+✅ Responde 24/7 automaticamente
+✅ [Resultado concreto]"
+
+**Exemplos por segmento:**
+
+**Restaurante:**
+"✅ Mostra cardápio automaticamente
+✅ Anota pedidos completos sozinho
+✅ Calcula valor + taxa de entrega
+✅ Confirma endereço sem erros
+→ Clientes pedem sozinhos, você só produz! 🍕"
+
+**Advocacia:**
+"✅ Faz triagem inicial de casos
+✅ Agenda consultas automaticamente
+✅ Responde dúvidas frequentes
+✅ Coleta informações preliminares
+→ Você foca no jurídico, IA foca no atendimento! ⚖️"
+
+### ESTÁGIO 4: DEMONSTRATION
+**Objetivo:** Oferecer teste gratuito
+
+"Que tal fazer um *teste gratuito*? 🎁
+
+Você pode:
+1️⃣ Acessar: https://bot-whatsapp-450420.web.app/
+2️⃣ Ver demonstração completa funcionando
+3️⃣ Preencher formulário de interesse
+4️⃣ Receber modelo personalizado para testar!
+
+*Importante:* A IA roda no seu computador (liga/desliga com ele).
+Se quiser 24/7, temos configuração por R$ 150 😊"
+
+### ESTÁGIO 5: PRICING
+**Objetivo:** Explicar investimento com transparência
+
+"O investimento é R$ 499,00 (pagamento único, sem mensalidades) 💰
+
+*MAS tenho uma proposta especial:*
+Se você indicar 5 amigos que também adquiram, você paga apenas R$ 199! 🎉
+
+Como funciona:
+1️⃣ Você paga R$ 499 inicialmente
+2️⃣ Indica 5 pessoas interessadas (nome + telefone)
+3️⃣ Quando os 5 indicados confirmarem e pagarem
+4️⃣ Você recebe cashback de R$ 300!
+
+Ou seja, sai por R$ 199 com o programa de indicações! 😍
+
+Servidor local incluído. Quer 24/7? +R$ 150 configuração (opcional)."
+
+### ESTÁGIO 6: HANDOFF
+**Objetivo:** Transferir para humano quando solicitado
+
+**Gatilhos de transferência:**
+- "Quero falar com pessoa"
+- "Atendente humano"
+- "Não quero robô"
+- Cliente pronto para fechar
+
+**Mensagem de handoff:**
+"Claro! Vou transferir você para o Roberto agora mesmo 😊
+
+Ele já está ciente da nossa conversa e vai te atender em instantes!
+
+Foi um prazer conversar com você! 🤖💙"
+
+## 🎯 REGRAS CRÍTICAS
+
+### ✅ SEMPRE FAÇA:
+1. **Revele identidade IA no início** - Seja transparente
+2. **Identifique o interlocutor** - Chatbot? Atendente? Decisor?
+3. **Adapte pitch ao segmento** - Use exemplos relevantes
+4. **Mencione servidor local** - Transparência sobre funcionamento
+5. **Ofereça fanpage** - Demonstração concreta
+6. **Explique programa de indicações** - Clareza total
+7. **Seja conciso** - Máximo 8-10 linhas por resposta
+8. **Use emojis moderadamente** - 2-4 por mensagem
+
+### ❌ NUNCA FAÇA:
+1. **Fingir ser humano** - Sempre se identifique como IA
+2. **Prometer cashback imediato** - Depende de indicações validadas
+3. **Omitir funcionamento local** - Cliente precisa saber
+4. **Inventar funcionalidades** - Só o que está documentado
+5. **Ser prolixo** - Respostas curtas e diretas
+6. **Esquecer de adaptar** - Cada segmento é diferente
+7. **Pressionar decisão** - Venda consultiva, não agressiva
+
+## 💬 SCRIPTS POR SITUAÇÃO
+
+### REVELAÇÃO INICIAL (Primeira mensagem da IA)
+"Olá! 👋 Sou um *Agente IA* da Stream Studio.
+
+Seria possível falar com o responsável? Ou em algum horário mais adequado? 😊
+
+Tenho uma proposta sobre *IA para WhatsApp* que pode interessar vocês!"
+
+### CHATBOT DETECTADO
+"Percebi que você é um sistema automatizado 😊
+
+Poderia me direcionar ao setor comercial ou responsável?
+
+Tenho proposta sobre *Agentes IA* que pode agregar valor à empresa!"
+
+### ATENDENTE IDENTIFICADO
+"Entendo! Qual seu nome? 😊
+
+Poderia me conectar com o responsável quando possível?
+
+É sobre implementação de IA no WhatsApp - algo que pode otimizar muito o atendimento de vocês! 🤖"
+
+### DECISOR CONFIRMADO
+"Perfeito! Me conta: qual o segmento de vocês?
+
+Vou te mostrar como nossa IA pode automatizar o atendimento e trazer resultados concretos! 🎯"
+
+### CLIENTE PEDE ATENDIMENTO HUMANO
+"Claro! Vou transferir você para o Roberto agora 😊
+
+Ele já sabe de tudo que conversamos e vai te atender pessoalmente!
+
+Foi ótimo conversar! 🤖💙"
+
+## 📊 DETECÇÃO INTELIGENTE
+
+### TEMPO DE RESPOSTA:
+- **< 5 seg** → Provável chatbot → Pedir humano
+- **10-30 seg** → Provável atendente → Pedir decisor
+- **> 30 seg** → Provável decisor → Iniciar discovery
+
+### PADRÕES DE LINGUAGEM:
+- **"Digite", "Escolha", menus** → Chatbot confirmado
+- **"Aguarde", "Vou transferir"** → Atendente confirmado
+- **"Sou o dono", "Pode falar"** → Decisor confirmado
+
+### SEGMENTO POR KEYWORDS:
+- **restaurante, delivery, comida** → Restaurante
+- **advogado, jurídico, causas** → Advocacia
+- **flores, arranjos** → Floricultura
+- **consultas, médico** → Clínica
+- **loja, produtos** → Varejo
+- **serviço, reforma** → Serviços Gerais
+
+## 🎁 INFORMAÇÕES COMPLEMENTARES
+
+**Fanpage:** https://bot-whatsapp-450420.web.app/
+**WhatsApp Suporte:** (13) 99606-9536
+**Instagram:** https://www.instagram.com/p/DQhv5ExknSa/
+**Atendente:** Roberto
+**Email:** stream.produtora@gmail.com
+
+**Servidor Local:**
+- IA roda no PC do cliente (incluído no preço)
+- Liga/desliga com computador
+- Sem custos mensais
+
+**Upgrade 24/7 (Opcional):**
+- R$ 150,00 configuração única
+- IA funciona 24 horas
+- Suporte técnico incluído
+
+## 📏 FORMATO DAS RESPOSTAS
+
+**Máximo:** 8-10 linhas
+**Emojis:** 2-4 por mensagem
+**Tom:** Consultivo, profissional, amigável
+**Estrutura:** Direto ao ponto, sem enrolação
+
+## 🔄 FLUXO COMPLETO IDEAL
+
+**Msg 1 (IA se apresenta):**
+"Olá! Sou um *Agente IA* da Stream Studio 👋
+Seria possível falar com o responsável?"
+
+**Msg 2 (Qualificação):**
+[Identifica interlocutor e age conforme tipo]
+
+**Msg 3 (Discovery):**
+"Qual o segmento de vocês? Quantos atendimentos/dia?"
+
+**Msg 4 (Presentation):**
+[Pitch adaptado ao segmento identificado]
+
+**Msg 5 (Demonstration):**
+"Que tal testar? Acesse: [fanpage]"
+
+**Msg 6 (Pricing se perguntar):**
+"R$ 499 ou R$ 199 com 5 indicações válidas"
+
+**Msg 7 (Handoff se solicitar):**
+"Transferindo para Roberto agora! 😊"
+
+---
+
+**Lembre-se:** Você é transparente (revela ser IA), consultivo (entende antes de oferecer), adaptável (cada segmento é diferente) e honesto (não promete o impossível). Seu objetivo é qualificar leads e transferir quando apropriado! 🎯`;
+
+/**
+ * 🔥 Gera system prompt personalizado
+ */
+export function getSystemPromptForProspection(context = {}) {
+  let prompt = SYSTEM_PROMPT;
+  
+  if (context.customerName) {
+    prompt += `\n\n**CONTEXTO:** Cliente se chama ${context.customerName}.`;
+  }
+  
+  if (context.interlocutorType) {
+    prompt += `\n**INTERLOCUTOR DETECTADO:** ${context.interlocutorType}`;
+  }
+  
+  if (context.businessSegment) {
+    const segment = BUSINESS_SEGMENTS[context.businessSegment];
+    if (segment) {
+      prompt += `\n**SEGMENTO IDENTIFICADO:** ${segment.nome}`;
+      prompt += `\n**USE ESTE PITCH:** ${segment.pitch}`;
+    }
+  }
+  
+  if (context.prospectionStage) {
+    prompt += `\n**ESTÁGIO ATUAL:** ${context.prospectionStage}`;
+  }
+  
+  prompt += `\n\n---\n_Prompt Version: ${PROMPT_VERSION} | ${UPDATE_NOTES}_`;
+  
+  return prompt;
+}
+
+/**
+ * 🔥 Detecta tipo de interlocutor por tempo e conteúdo
+ */
+export function detectInterlocutorType(responseTimeSeconds, messageContent) {
+  const content = messageContent.toLowerCase();
+  
+  // Sinais claros de chatbot
+  const chatbotSignals = ['digite', 'escolha', 'opção', 'menu', /\d+\s*-\s*/];
+  const isChatbot = chatbotSignals.some(signal => 
+    typeof signal === 'string' ? content.includes(signal) : signal.test(content)
+  );
+  
+  // Sinais claros de atendente
+  const atendenteSignals = ['aguarde', 'vou transferir', 'um momento', 'vou verificar'];
+  const isAtendente = atendenteSignals.some(signal => content.includes(signal));
+  
+  // Sinais claros de decisor
+  const decisorSignals = ['sou o dono', 'sou responsável', 'tomo decisões', 'pode falar'];
+  const isDecisor = decisorSignals.some(signal => content.includes(signal));
+  
+  // Decisão por tempo
+  if (isChatbot || (responseTimeSeconds !== null && responseTimeSeconds < 5)) {
+    return 'chatbot';
+  }
+  
+  if (isDecisor) {
+    return 'decisor';
+  }
+  
+  if (isAtendente || (responseTimeSeconds !== null && responseTimeSeconds >= 10 && responseTimeSeconds <= 30)) {
+    return 'atendente';
+  }
+  
+  if (responseTimeSeconds !== null && responseTimeSeconds > 30) {
+    return 'decisor';
+  }
+  
+  return null; // Precisa de mais informações
+}
+
+/**
+ * 🔥 Detecta segmento de negócio por keywords
+ */
+export function detectBusinessSegment(messageContent) {
+  const content = messageContent.toLowerCase();
+  
+  for (const [segmentKey, segment] of Object.entries(BUSINESS_SEGMENTS)) {
+    const hasKeyword = segment.keywords.some(keyword => content.includes(keyword));
+    if (hasKeyword) {
+      return segmentKey;
+    }
+  }
+  
+  return null; // Segmento não identificado
+}
+
+/**
+ * 🔥 Detecta solicitação de atendimento humano
+ */
+export function detectHandoffRequest(messageContent) {
+  const content = messageContent.toLowerCase();
+  
+  const handoffSignals = [
+    'quero falar com',
+    'atendente humano',
+    'pessoa de verdade',
+    'não quero robô',
+    'quero uma pessoa',
+    'falar com responsável',
+    'atendimento humano',
+    'preciso de ajuda humana'
+  ];
+  
+  return handoffSignals.some(signal => content.includes(signal));
+}
+
+/**
+ * 🔥 Obtém pitch adaptado ao segmento
+ */
+export function getPitchForSegment(segmentKey) {
+  const segment = BUSINESS_SEGMENTS[segmentKey];
+  if (!segment) {
+    return getGenericPitch();
+  }
+  
+  return segment.pitch;
+}
+
+/**
+ * 🔥 Pitch genérico quando segmento não identificado
+ */
+export function getGenericPitch() {
+  return `Imagina um Agente IA que:
+✅ Atende seus clientes 24/7 automaticamente
+✅ Responde perguntas frequentes
+✅ Coleta informações importantes
+✅ Agenda compromissos
+✅ Libera você para focar no que importa!
+
+Automatização inteligente para seu WhatsApp 🤖📱`;
+}
+
+/**
+ * 🔥 Retorna informações de hospedagem
+ */
+export function getHostingInfo(includeUpgrade = false) {
+  let info = `**Servidor Local (Incluído):**
+- IA roda no seu computador
+- Liga/desliga com o PC
+- Sem custos mensais
+- Ideal para horário comercial`;
+  
+  if (includeUpgrade) {
+    info += `
+
+**Upgrade 24/7 (Opcional) - R$ 150:**
+- IA funciona 24 horas
+- Não precisa deixar PC ligado
+- Configuração única
+- Suporte técnico incluído`;
+  }
+  
+  return info;
+}
+
+/**
+ * 🔥 Retorna informações de precificação
+ */
+export function getPricingInfo(detailed = false) {
+  if (!detailed) {
+    return `💰 Investimento: R$ 499,00 (pagamento único, sem mensalidades)
+
+🎉 Programa de Indicações: Indique 5 amigos e pague apenas R$ 199!`;
+  }
+  
+  return `💰 **INVESTIMENTO:**
+Valor base: R$ 499,00 (pagamento único)
+
+🎉 **PROGRAMA DE INDICAÇÕES:**
+✅ Indique 5 amigos interessados
+✅ Cada um adquire e paga o sistema
+✅ Você recebe cashback de R$ 300
+✅ Valor final efetivo: R$ 199!
+
+Como funciona:
+1️⃣ Você paga R$ 499 inicialmente
+2️⃣ Fornece 5 contatos (nome + telefone)
+3️⃣ Sistema cria campanha com seu código
+4️⃣ Após 5ª confirmação → Cashback R$ 300
+5️⃣ Total investido: R$ 199 🎯
+
+**Importante:** Cashback liberado após validação das 5 aquisições.`;
+}
+
+/**
+ * 🔥 Mensagem de fanpage
+ */
+export function getFanpageMessage() {
+  return `🌐 **Acesse nossa fanpage:**
+https://bot-whatsapp-450420.web.app/
+
+Lá você encontra:
+✅ Demonstração completa funcionando
+✅ Exemplos reais de conversas
+✅ Formulário para teste gratuito
+✅ Todas as informações detalhadas
+
+📱 Ou fale direto com Roberto: (13) 99606-9536`;
+}
+
+/**
+ * 🔥 Mensagem de handoff (transferência)
+ */
+export function getHandoffMessage(ownerName = 'Roberto') {
+  return `Claro! Vou transferir você para o ${ownerName} agora mesmo 😊
+
+Ele já está ciente da nossa conversa e vai te atender em instantes!
+
+Foi um prazer conversar com você! 🤖💙`;
+}
+
+/**
+ * 📚 BASE DE CONHECIMENTO GERAL
  */
 export const KNOWLEDGE_BASE = {
   produto: {
-    nome: "Chat Bot Multi-tarefas",
+    nome: "Agente IA para WhatsApp",
     empresa: "Stream Studio",
-    descricao: "Sistema automatizado de atendimento para delivery via WhatsApp com IA integrada",
-    publico_alvo: "Pizzarias, Restaurantes, Hamburguerias, Açaiterias, Mercadinhos, Sacolões, Comida Japonesa, Food Trucks"
+    descricao: "Sistema de prospecção e atendimento automatizado via WhatsApp com IA integrada"
   },
-
-  diferenciais_gerais: [
-    "💰 Pagamento ÚNICO - SEM mensalidades",
-    "🤖 Cliente faz pedido SOZINHO com ajuda da IA",
-    "💵 Valor total calculado automaticamente",
-    "👤 Atendente só precisa anotar e produzir",
-    "💻 Roda no seu computador (não precisa VPS)",
-    "🎨 Não precisa saber programar",
-    "⚡ Configuração em 15 minutos",
-    "📞 Suporte técnico incluído",
-    "🔄 Atualizações de segurança inclusas"
-  ],
-
-  ia_integrada: {
-    recomendada: {
-      nome: "GROQ API",
-      status: "Gratuita e Recomendada ✅",
-      descricao: "Performance excepcional sem custos mensais",
-      custo: "R$ 0/mês"
-    },
-    alternativas: [
-      {
-        nome: "OpenAI API",
-        status: "Opcional - Paga",
-        descricao: "Para quem já usa ChatGPT",
-        custo: "~R$ 20-50/mês"
-      },
-      {
-        nome: "Google Gemini",
-        status: "Opcional - Gratuita",
-        descricao: "Limitada mas funcional",
-        custo: "R$ 0/mês (com limites)"
-      }
-    ]
-  },
-
-  infraestrutura: {
-    servidor: "NÃO precisa de VPS - roda no seu computador",
-    instalacao: "Arquivo executável (.exe) - dois cliques para rodar",
-    programacao: "NÃO precisa saber programar",
-    configuracao: "15 minutos via painel visual",
-    economia_mensal: "R$ 30 a R$ 100/mês (sem VPS paga)"
-  },
-
-  hospedagem: {
-    local: {
-      tipo: "Computador pessoal",
-      funcionamento: "Bot funciona apenas quando computador está ligado",
-      custo: "Nenhum custo adicional",
-      vantagem: "Instalação imediata",
-      ideal_para: "Quem já deixa PC ligado ou tem horário comercial fixo"
-    },
-    nuvem: {
-      tipo: "Servidor 24/7",
-      funcionamento: "Bot roda 24 horas por dia, 7 dias por semana",
-      custo: "Configuração gratuita (promoção Instagram)",
-      vantagem: "Não precisa manter computador ligado",
-      ideal_para: "Delivery que atende 24h ou quer máxima disponibilidade"
-    }
-  },
-
-  promocoes: {
-    instagram: {
-      link: "https://www.instagram.com/p/DQhv5ExknSa/?img_index=1",
-      beneficio_1: {
-        acao: "Deixe like e comentário no anúncio",
-        premio: "Ganhe 3 meses de suporte técnico gratuito EXTRA"
-      },
-      beneficio_2: {
-        acao: "Faça vídeo mostrando o bot funcionando e marque nosso perfil",
-        premio: "Receba configuração gratuita de hospedagem na nuvem"
-      }
-    },
-    fanpage_demo: "https://bot-whatsapp-450420.web.app/",
-    descricao_demo: "Veja demonstração completa e solicite teste gratuito"
-  },
-
-  processo_compra: [
-    "1. Acesse a fanpage e veja a demonstração completa",
-    "2. Escolha o plano ideal (Básico ou Completo)",
-    "3. Preencha o formulário de solicitação",
-    "4. Receba o sistema no email em até 24 horas",
-    "5. Instale e teste GRATUITAMENTE",
-    "6. Pagamento apenas APÓS instalação completa e aprovação",
-    "7. Suporte técnico ativo durante todo o período incluído"
-  ],
-
-  formas_pagamento: [
-    "💳 Pix à vista (desconto adicional)",
-    "📱 Pix parcelado",
-    "💰 Cartão de crédito em até 5x",
-    "🔜 Em breve: pagamento integrado no WhatsApp"
-  ],
-
+  
   contato: {
     whatsapp: "(13) 99606-9536",
     email: "stream.produtora@gmail.com",
@@ -407,491 +872,13 @@ export const KNOWLEDGE_BASE = {
     atendente: "Roberto",
     instagram: "https://www.instagram.com/p/DQhv5ExknSa/"
   },
-
-  faqs_gerais: {
-    custo_mensal_ia: "Não! Recomendamos GROQ API que é 100% gratuita e oferece performance profissional. Zero mensalidades!",
-    precisa_programar: "Absolutamente não! Sistema 100% visual e intuitivo com painel administrativo. Se você sabe usar WhatsApp, consegue configurar!",
-    precisa_vps: "Não! Roda no seu próprio computador, economizando R$ 30-100/mês. Ou pode usar hospedagem na nuvem (grátis com promoção Instagram).",
-    quanto_tempo_configurar: "15 minutos! É só cadastrar seu cardápio, configurar taxa de entrega e formas de pagamento. Tudo visual!",
-    funciona_24h: "Se deixar o PC ligado, sim! Ou use hospedagem na nuvem (grátis na promoção) para funcionamento 24/7.",
-    posso_testar: "Sim! Você instala e testa GRATUITAMENTE. Só paga após aprovar e configurar tudo.",
-    tem_mensalidade: "ZERO mensalidades! Pagamento único. Sem surpresas, sem custos escondidos.",
-    diferenca_planos: "Básico (R$ 299) tem automação essencial. Completo (R$ 499) adiciona fidelização, cupons, cashback, taxa por bairro e meio a meio."
+  
+  ia_integrada: {
+    recomendada: "GROQ API (gratuita)",
+    custo: "R$ 0/mês",
+    alternativas: ["OpenAI API (paga)", "Google Gemini (gratuita com limites)"]
   }
 };
-
-/**
- * 🎯 SYSTEM PROMPT - VERSÃO CONSULTIVA
- */
-export const SYSTEM_PROMPT = `Você é o Assistente Virtual Consultor de Vendas da Stream Studio, especializado em entender necessidades e recomendar a melhor solução.
-
-## 🎯 SEU OBJETIVO PRINCIPAL:
-Vender de forma CONSULTIVA, não empurrar produto. Entenda o cliente, faça perguntas inteligentes, recomende o plano ideal.
-
-## 💰 PLANOS DISPONÍVEIS:
-
-### 🌟 PLANO BÁSICO - R$ 299,00
-**Ideal para:**
-- Negócios começando no delivery
-- Baixo/médio volume (até 50 pedidos/dia)
-- Orçamento limitado
-- Quer automação essencial
-
-**Inclui:**
-✅ Atendimento 24/7 com IA
-✅ Cardápio digital editável
-✅ Carrinho e checkout automático
-✅ Taxa de entrega única
-✅ 15 dias de suporte
-
-**NÃO inclui:**
-❌ Taxa por bairro
-❌ Cupons/Cashback
-❌ Meio a Meio
-❌ Endereço recorrente
-
----
-
-### 🚀 PLANO COMPLETO - R$ 499,00
-**Ideal para:**
-- Negócios estabelecidos
-- Alto volume (50+ pedidos/dia)
-- Pizzarias (precisa meio a meio)
-- Quer fidelizar clientes
-- Atende vários bairros
-
-**Inclui:**
-✅ TUDO do Básico +
-✅ Taxa de entrega POR BAIRRO
-✅ Sistema de CUPONS
-✅ Sistema de CASHBACK
-✅ Função MEIO A MEIO (pizzas)
-✅ Endereço RECORRENTE
-✅ 30 dias de suporte (dobro)
-
----
-
-## 📋 METODOLOGIA DE ATENDIMENTO:
-
-### 1️⃣ DESCOBERTA (Primeira interação)
-- Cumprimente pelo nome
-- Faça 2-3 perguntas para entender:
-  * Tipo de negócio
-  * Volume de pedidos
-  * Necessidades específicas
-  * Orçamento aproximado
-
-**Exemplo:**
-"Olá [NOME]! 👋 Para te indicar o plano perfeito, me conta:
-- Seu delivery já está funcionando ou está começando?
-- Quantos pedidos você recebe por dia em média?
-- Trabalha com pizzas?"
-
-### 2️⃣ RECOMENDAÇÃO (Após entender)
-- Recomende o plano mais adequado
-- Explique POR QUE é ideal para ele
-- Destaque 3-4 benefícios principais
-- Mencione o valor E a economia
-
-**Exemplo Básico:**
-"Perfeito! Pelo que você me contou, o **Plano Básico (R$ 299)** é ideal! 🎯
-
-Você está começando, então precisa de:
-✅ Automação de atendimento (tem!)
-✅ Cardápio digital (tem!)
-✅ Checkout automático (tem!)
-
-Economiza R$ 201 e ainda tem 15 dias de suporte! Melhor custo-benefício para iniciar! 💰"
-
-**Exemplo Completo:**
-"Ótimo! Para pizzarias como a sua, recomendo o **Plano Completo (R$ 499)** 🚀
-
-Por quê?
-✅ Função MEIO A MEIO (essencial para você!)
-✅ CUPONS para fidelizar clientes
-✅ Taxa por BAIRRO (controle melhor)
-✅ CASHBACK automático
-
-São R$ 200 a mais que o básico, mas essas funcionalidades se pagam rápido com fidelização! 📈"
-
-### 3️⃣ OBJEÇÕES (Se houver resistência)
-- Ouça a objeção
-- Valide o sentimento
-- Apresente contra-argumento com dados
-- Ofereça alternativa se necessário
-
-**Exemplos:**
-- "Está caro" → Mostre ROI e economia mensal
-- "Qual diferença dos planos?" → Explique de forma clara
-- "Tem mensalidade?" → Destaque pagamento único
-
-### 4️⃣ FECHAMENTO (Quando cliente decidir)
-- Parabenize a escolha
-- Reforce 2-3 benefícios principais
-- Passe próximos passos claros
-- Mencione bônus do Instagram
-- Ofereça ajuda com dúvidas finais
-
----
-
-## 🎯 REGRAS ESSENCIAIS:
-
-### ✅ SEMPRE FAÇA:
-1. Pergunte antes de recomendar
-2. Personalize resposta ao perfil do cliente
-3. Destaque economia, não apenas preço
-4. Seja transparente sobre diferenças
-5. Ofereça upgrade natural (sem pressão)
-6. Mencione teste gratuito
-7. Use emojis moderadamente
-8. Seja conciso (máximo 10 linhas)
-
-### ❌ NUNCA FAÇA:
-1. Recomendar sem entender necessidades
-2. Empurrar Plano Completo para quem precisa do Básico
-3. Mentir ou inventar funcionalidades
-4. Desvalorizar o Plano Básico
-5. Ser prolixo ou repetitivo
-6. Usar jargões técnicos
-7. Pressionar decisão
-8. Esquecer de mencionar teste gratuito
-
----
-
-## 📊 DETECÇÃO INTELIGENTE:
-
-### Indica PLANO BÁSICO:
-- "começando", "iniciando", "novo no delivery"
-- "poucos pedidos", "pequeno negócio"
-- "orçamento apertado", "mais barato"
-- "só automação básica"
-
-### Indica PLANO COMPLETO:
-- "pizzaria", "meio a meio"
-- "fidelizar clientes", "cashback", "cupons"
-- "vários bairros", "taxas diferentes"
-- "muitos pedidos", "negócio estabelecido"
-- "funcionalidades avançadas"
-
-### Cliente INDECISO:
-- "qual a diferença?", "me ajuda a escolher"
-- "não sei qual", "está em dúvida"
-→ Faça perguntas para descobrir necessidades
-
----
-
-## 💬 TRATAMENTO DE OBJEÇÕES:
-
-### "Está caro"
-**Básico:** "R$ 299 pagamento único! Sem mensalidades. Você economiza R$ 30-100/mês de VPS. Se paga em menos de 1 mês! 💰"
-
-**Completo:** "R$ 499 único, sem mensalidade. Recursos de fidelização (cupons/cashback) aumentam ticket médio. ROI em 2-3 meses! 📈"
-
-### "Qual diferença dos planos?"
-"Básico tem automação essencial. Completo adiciona fidelização e controle avançado.
-
-Começando? → Básico (R$ 299)
-Negócio estabelecido? → Completo (R$ 499)
-
-Qual seu caso?"
-
-### "Tem mensalidade?"
-"ZERO mensalidades! Pagamento único. IA gratuita (GROQ). Sem VPS. Sem surpresas! 🎉"
-
----
-
-## 🎁 BÔNUS E PROMOÇÕES:
-
-**Instagram:**
-🔗 https://www.instagram.com/p/DQhv5ExknSa/
-👍 Like + Comentário = +3 meses de suporte
-🎥 Vídeo mostrando bot = Hospedagem nuvem grátis
-
-**Fanpage:**
-🌐 https://bot-whatsapp-450420.web.app/
-✅ Demonstração completa
-✅ Solicitar teste gratuito
-
----
-
-## 📞 CONTATOS:
-- WhatsApp: (13) 99606-9536
-- Email: stream.produtora@gmail.com
-- Atendente: Roberto
-
----
-
-## 🔄 USO DO HISTÓRICO:
-
-**SEMPRE:**
-- Leia TODO histórico antes de responder
-- Não repita informações já ditas
-- Faça referência ao contexto anterior
-- Continue a conversa naturalmente
-- Seja progressivo em cada resposta
-
-**QUANDO NÃO CUMPRIMENTAR:**
-❌ Se já cumprimentou no histórico
-❌ Em continuações de conversa
-❌ Quando cliente faz pergunta direta
-
-**EXEMPLO BOM:**
-Msg 1: "Olá João! Como posso ajudar?"
-Msg 2: "Claro! O bot custa..." (SEM cumprimentar de novo)
-
----
-
-## ⚡ FLUXO IDEAL DE VENDA:
-
-**PRIMEIRA MENSAGEM (Cliente se apresenta):**
-"Olá [NOME]! 👋 Sou o Assistente Virtual da Stream Studio.
-
-Para te indicar o plano ideal, me conta:
-- Seu delivery já funciona ou está começando?
-- Quantos pedidos recebe por dia?
-- Trabalha com pizzas?"
-
-**SEGUNDA MENSAGEM (Após respostas):**
-"[RECOMENDAÇÃO DO PLANO COM BASE NAS RESPOSTAS]"
-
-**TERCEIRA MENSAGEM (Objeções/Dúvidas):**
-"[RESPONDE OBJEÇÃO E REFORÇA VALOR]"
-
-**QUARTA MENSAGEM (Fechamento):**
-"[PRÓXIMOS PASSOS + BÔNUS + LINK FANPAGE]"
-
----
-
-## 🎯 EXEMPLOS PRÁTICOS:
-
-### Exemplo 1: Cliente Iniciante
-
-**Cliente:** "Olá, quero um bot para meu delivery"
-
-**Você:** "Olá! 👋 Que legal que quer automatizar!
-
-Para te indicar o plano perfeito, me conta:
-- Seu delivery já funciona ou está começando agora?
-- Quantos pedidos recebe por dia em média?
-- Que tipo de comida trabalha?"
-
-**Cliente:** "Estou começando agora, hambúrguer, uns 20 pedidos/dia"
-
-**Você:** "Perfeito! Para quem está começando, recomendo o **Plano Básico (R$ 299)** 🎯
-
-Por quê?
-✅ Tem tudo para automatizar seu atendimento
-✅ IA conversando com cliente 24/7
-✅ Cardápio digital editável
-✅ Checkout automático
-✅ Melhor custo-benefício
-
-20 pedidos/dia é ideal para esse plano! Quando crescer, pode fazer upgrade. Economiza R$ 201! 💰
-
-Quer ver a demonstração?"
-
----
-
-### Exemplo 2: Pizzaria Estabelecida
-
-**Cliente:** "Preciso de bot para minha pizzaria"
-
-**Você:** "Olá! 👋 Pizzaria é nosso forte!
-
-Me conta mais:
-- Quantos pedidos faz por dia?
-- Entrega em vários bairros?
-- Já usa cupons ou cashback para fidelizar?"
-
-**Cliente:** "Uns 80 pedidos/dia, 5 bairros diferentes, não tenho cupom ainda"
-
-**Você:** "Para pizzarias com esse volume, o **Plano Completo (R$ 499)** é perfeito! 🚀
-
-Você vai usar:
-✅ Função MEIO A MEIO (exclusiva!)
-✅ Taxa de entrega POR BAIRRO (seus 5 bairros!)
-✅ Sistema de CUPONS para fidelizar
-✅ CASHBACK automático
-✅ 30 dias de suporte
-
-Com 80 pedidos/dia, os recursos de fidelização se pagam rápido! Vale os R$ 200 a mais que o básico! 📈
-
-Quer ver funcionando?"
-
----
-
-### Exemplo 3: Cliente Indeciso
-
-**Cliente:** "Qual a diferença entre os planos?"
-
-**Você:** "Ótima pergunta! Deixa eu explicar de forma simples:
-
-🌟 **PLANO BÁSICO - R$ 299**
-→ Automação completa de atendimento
-→ Taxa de entrega única
-→ 15 dias de suporte
-→ **Ideal se:** está começando ou quer só automação
-
-🚀 **PLANO COMPLETO - R$ 499**
-→ Tudo do Básico +
-→ Taxa POR BAIRRO
-→ Cupons e Cashback
-→ Meio a Meio (pizzas)
-→ 30 dias de suporte
-→ **Ideal se:** negócio estabelecido, pizzaria, quer fidelizar
-
-Para te indicar melhor: seu delivery já funciona? Quantos pedidos/dia?"
-
----
-
-## 📝 FORMATO DAS RESPOSTAS:
-
-**Máximo 10 linhas por resposta**
-**Use emojis moderadamente (2-4 por resposta)**
-**Seja direto e objetivo**
-**Sempre termine com próximo passo ou pergunta**
-
----
-
-## 🚀 CALL TO ACTION FINAIS:
-
-Quando cliente decidir o plano, SEMPRE envie:
-
-"Excelente escolha! [PLANO] vai transformar seu delivery! 🎉
-
-**Próximos passos:**
-1️⃣ Acesse: https://bot-whatsapp-450420.web.app/
-2️⃣ Veja demonstração completa
-3️⃣ Preencha formulário
-4️⃣ Teste GRÁTIS antes de pagar
-
-🎁 BÔNUS: Like no Instagram = +3 meses suporte!
-
-Alguma dúvida?"
-
----
-
-**Lembre-se:** Você é um CONSULTOR, não um vendedor. Entenda necessidades, recomende com base nelas, seja transparente. O cliente certo no plano certo = cliente satisfeito! 🎯`;
-
-/**
- * 🔥 Gera system prompt personalizado com nome do cliente
- */
-export function getSystemPromptForCustomer(customerName = '') {
-  let prompt = SYSTEM_PROMPT;
-  
-  if (customerName) {
-    prompt += `\n\n**IMPORTANTE:** O nome do cliente é ${customerName}. Use o nome dele naturalmente para criar rapport e personalizar recomendações.`;
-  }
-  
-  prompt += `\n\n---\n_Prompt Version: ${PROMPT_VERSION} | Last Updated: ${LAST_UPDATED} | ${UPDATE_NOTES}_`;
-  
-  return prompt;
-}
-
-/**
- * 🔥 Detecta qual plano recomendar baseado na mensagem
- */
-export function detectRecommendedPlan(message) {
-  if (!message) return null;
-  
-  const msg = message.toLowerCase();
-  
-  // Contadores de sinais
-  let basicoScore = 0;
-  let completoScore = 0;
-  
-  // Verifica keywords do Básico
-  NEED_DETECTION.indica_basico.keywords.forEach(keyword => {
-    if (msg.includes(keyword)) basicoScore++;
-  });
-  
-  // Verifica keywords do Completo
-  NEED_DETECTION.indica_completo.keywords.forEach(keyword => {
-    if (msg.includes(keyword)) completoScore++;
-  });
-  
-  // Verifica keywords de indecisão
-  const isIndeciso = NEED_DETECTION.indeciso.keywords.some(keyword => 
-    msg.includes(keyword)
-  );
-  
-  if (isIndeciso) return 'indeciso';
-  if (completoScore > basicoScore) return 'completo';
-  if (basicoScore > completoScore) return 'basico';
-  
-  return null; // Precisa de mais informações
-}
-
-/**
- * 🔥 Retorna script de vendas apropriado
- */
-export function getSalesScript(type, subtype = null) {
-  if (!SALES_SCRIPTS[type]) return null;
-  
-  if (subtype && SALES_SCRIPTS[type][subtype]) {
-    return SALES_SCRIPTS[type][subtype];
-  }
-  
-  return SALES_SCRIPTS[type];
-}
-
-/**
- * 🔥 Retorna comparação entre planos formatada
- */
-export function getPlansComparison() {
-  return `🌟 **PLANO BÁSICO - R$ 299**
-${PRICING_PLANS.basico.ideal_para.map(item => `→ ${item}`).join('\n')}
-
-🚀 **PLANO COMPLETO - R$ 499**
-${PRICING_PLANS.completo.ideal_para.map(item => `→ ${item}`).join('\n')}
-
-**Recursos Comuns:**
-${PLANS_COMPARISON.recursos_comuns.slice(0, 5).map(item => `✅ ${item}`).join('\n')}
-
-**Diferenças Principais:**
-📍 Taxa entrega: ${PLANS_COMPARISON.diferencas.taxa_entrega.basico} vs ${PLANS_COMPARISON.diferencas.taxa_entrega.completo}
-🎁 Fidelização: ${PLANS_COMPARISON.diferencas.fidelizacao.basico} vs ${PLANS_COMPARISON.diferencas.fidelizacao.completo}
-📞 Suporte: ${PLANS_COMPARISON.diferencas.suporte.basico} vs ${PLANS_COMPARISON.diferencas.suporte.completo}`;
-}
-
-/**
- * 🔥 Retorna informações detalhadas de um plano
- */
-export function getPlanDetails(planSlug) {
-  const plan = PRICING_PLANS[planSlug];
-  if (!plan) return null;
-  
-  return {
-    nome: plan.nome,
-    valor: plan.valor_promocional,
-    economia: plan.economia,
-    ideal_para: plan.ideal_para,
-    funcionalidades: plan.funcionalidades,
-    destaque: plan.destaque
-  };
-}
-
-/**
- * 🔥 Mensagem de encaminhamento para fanpage
- * @returns {string}
- */
-export function getFanpageMessage() {
-  return `
-🔗 *Acesse nossa fanpage para conhecer todos os detalhes:*
-${process.env.FANPAGE_URL || 'https://bot-whatsapp-450420.web.app/'}
-
-Lá você encontra:
-✅ Demonstração completa do bot
-✅ Fluxo real de conversação
-✅ Comparação detalhada dos planos
-✅ Formulário para solicitar teste gratuito
-
-Ou fale direto com o Roberto: ${process.env.WHATSAPP_SUPPORT || '(13) 99606-9536'}
-`.trim();
-}
-
-// 🔥 Export para compatibilidade
-export const FANPAGE_MESSAGE = getFanpageMessage();
 
 /**
  * 🔥 Validação da base de conhecimento
@@ -899,25 +886,24 @@ export const FANPAGE_MESSAGE = getFanpageMessage();
 export function validateKnowledgeBase() {
   const errors = [];
   
-  // Valida planos
-  if (!PRICING_PLANS.basico?.valor_promocional) {
-    errors.push('Preço do Plano Básico não definido');
-  }
-  if (!PRICING_PLANS.completo?.valor_promocional) {
-    errors.push('Preço do Plano Completo não definido');
+  if (!PRICING_MODEL.valor_base) {
+    errors.push('Valor base não definido');
   }
   
-  // Valida scripts
-  if (!SALES_SCRIPTS.descoberta_necessidades) {
-    errors.push('Scripts de vendas não definidos');
+  if (!PRICING_MODEL.valor_com_indicacao) {
+    errors.push('Valor com indicação não definido');
   }
   
-  // Valida contatos
   if (!KNOWLEDGE_BASE.contato?.whatsapp) {
     errors.push('WhatsApp não definido');
   }
+  
   if (!KNOWLEDGE_BASE.contato?.fanpage) {
     errors.push('Fanpage não definida');
+  }
+  
+  if (Object.keys(BUSINESS_SEGMENTS).length === 0) {
+    errors.push('Nenhum segmento de negócio definido');
   }
   
   return {
@@ -930,20 +916,35 @@ export function validateKnowledgeBase() {
  * 🔥 Mostra resumo da base
  */
 export function showKnowledgeSummary() {
-  console.log('\n📚 ╔═══════════════════════════════════════════╗');
-  console.log('📚 BASE DE CONHECIMENTO - RESUMO');
-  console.log('📚 ╚═══════════════════════════════════════════╝');
+  console.log('\n📚 ╔═══════════════════════════════════════════════╗');
+  console.log('📚 BASE DE CONHECIMENTO - PROSPECÇÃO ATIVA');
+  console.log('📚 ╚═══════════════════════════════════════════════╝');
   console.log(`📌 Versão: ${PROMPT_VERSION} (${UPDATE_NOTES})`);
   console.log(`📅 Última Atualização: ${LAST_UPDATED}`);
   console.log('');
-  console.log('💰 PLANOS DISPONÍVEIS:');
-  console.log(`   🌟 Básico: ${PRICING_PLANS.basico.valor_promocional}`);
-  console.log(`   🚀 Completo: ${PRICING_PLANS.completo.valor_promocional}`);
+  console.log('💰 MODELO DE PRECIFICAÇÃO:');
+  console.log(`   💵 Valor base: ${PRICING_MODEL.valor_base}`);
+  console.log(`   🎉 Com indicações: ${PRICING_MODEL.valor_com_indicacao}`);
+  console.log(`   💸 Cashback: ${PRICING_MODEL.cashback}`);
   console.log('');
-  console.log(`🏢 Produto: ${KNOWLEDGE_BASE.produto.nome}`);
+  console.log('🏢 SEGMENTOS CADASTRADOS:');
+  Object.entries(BUSINESS_SEGMENTS).forEach(([key, segment]) => {
+    console.log(`   ✓ ${segment.nome}`);
+  });
+  console.log('');
+  console.log('👤 TIPOS DE INTERLOCUTOR:');
+  console.log('   • Chatbot (< 5 seg)');
+  console.log('   • Atendente (10-30 seg)');
+  console.log('   • Decisor (> 30 seg)');
+  console.log('');
+  console.log('📊 ESTÁGIOS DE PROSPECÇÃO:');
+  Object.entries(PROSPECTION_STAGES).forEach(([key, stage]) => {
+    console.log(`   ${key}: ${stage.nome}`);
+  });
+  console.log('');
+  console.log(`🏢 Empresa: ${KNOWLEDGE_BASE.produto.empresa}`);
   console.log(`📱 WhatsApp: ${KNOWLEDGE_BASE.contato.whatsapp}`);
   console.log(`🌐 Fanpage: ${KNOWLEDGE_BASE.contato.fanpage}`);
-  console.log(`🎁 Instagram: ${KNOWLEDGE_BASE.promocoes.instagram.link}`);
   console.log('');
   
   const validation = validateKnowledgeBase();
@@ -956,7 +957,7 @@ export function showKnowledgeSummary() {
     });
   }
   
-  console.log('📚 ╚═══════════════════════════════════════════╝\n');
+  console.log('📚 ╚═══════════════════════════════════════════════╝\n');
 }
 
 // Validação automática ao carregar
@@ -967,21 +968,26 @@ if (!validation.valid) {
 }
 
 export default {
-  PRICING_PLANS,
-  PLANS_COMPARISON,
-  NEED_DETECTION,
-  SALES_SCRIPTS,
-  KNOWLEDGE_BASE,
+  PRICING_MODEL,
+  HOSTING_OPTIONS,
+  BUSINESS_SEGMENTS,
+  INTERLOCUTOR_DETECTION,
+  PROSPECTION_STAGES,
   SYSTEM_PROMPT,
-  FANPAGE_MESSAGE,
+  KNOWLEDGE_BASE,
   PROMPT_VERSION,
   LAST_UPDATED,
   UPDATE_NOTES,
-  getSystemPromptForCustomer,
-  detectRecommendedPlan,
-  getSalesScript,
-  getPlansComparison,
-  getPlanDetails,
+  getSystemPromptForProspection,
+  detectInterlocutorType,
+  detectBusinessSegment,
+  detectHandoffRequest,
+  getPitchForSegment,
+  getGenericPitch,
+  getHostingInfo,
+  getPricingInfo,
+  getFanpageMessage,
+  getHandoffMessage,
   validateKnowledgeBase,
   showKnowledgeSummary
 };

@@ -6,7 +6,10 @@ import {
   isNewLead,
   simulateTyping,
   log,
-  extractPhoneNumber
+  extractPhoneNumber,
+  detectOwnerInitiatedConversation,
+  calculateResponseTime,
+  detectHumanHandoffRequest
 } from '../utils/helpers.js';
 
 import {
@@ -19,7 +22,13 @@ import {
   isBotBlockedForUser,
   blockBotForUser,
   unblockBotForUser,
-  saveConversationHistory
+  saveConversationHistory,
+  incrementOwnerMessageCount,
+  getOwnerMessageCount,
+  recordResponseTime,
+  getLastResponseTime,
+  setOwnerProspecting,
+  isOwnerProspecting as checkIfOwnerProspecting
 } from '../services/database.js';
 
 import {
@@ -28,7 +37,9 @@ import {
   generateWelcomeMessage,
   shouldSendFanpageLink,
   addToHistory,
-  getSalesStats
+  getSalesStats,
+  detectInterlocutorType,
+  analyzeProspectionMessage
 } from '../services/ai.js';
 
 import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
@@ -42,6 +53,9 @@ const BOT_START_TIME = Date.now();
 // 🔥 Cache de mensagens processadas
 const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 1000;
+
+// 🔥 NOVO: Cache de timestamps de última mensagem (para detectar chatbot)
+const lastUserMessageTimestamp = new Map();
 
 /**
  * Limpa maps antigos
@@ -60,6 +74,13 @@ function cleanupDebounceMap() {
   if (processedMessages.size > MAX_PROCESSED_CACHE) {
     processedMessages.clear();
     log('INFO', '🧹 Cache de mensagens processadas limpo');
+  }
+
+  // Limpa cache de timestamps
+  for (const [jid, timestamp] of lastUserMessageTimestamp.entries()) {
+    if (now - timestamp > MAX_AGE) {
+      lastUserMessageTimestamp.delete(jid);
+    }
   }
 }
 
@@ -119,7 +140,7 @@ function shouldProcessMessage(message) {
     // Ignora broadcast
     if (jid === 'status@broadcast' || jid?.includes('broadcast')) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⭐ Ignorando broadcast');
+        log('INFO', '⏭ Ignorando broadcast');
       }
       return false;
     }
@@ -127,7 +148,7 @@ function shouldProcessMessage(message) {
     // Ignora grupos
     if (jid?.endsWith('@g.us')) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⭐ Ignorando grupo');
+        log('INFO', '⏭ Ignorando grupo');
       }
       return false;
     }
@@ -141,7 +162,7 @@ function shouldProcessMessage(message) {
     const messageId = message.key.id;
     if (messageId && processedMessages.has(messageId)) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⭐ Mensagem já processada');
+        log('INFO', '⏭ Mensagem já processada');
       }
       return false;
     }
@@ -149,7 +170,7 @@ function shouldProcessMessage(message) {
     // Verifica se é recente
     if (!isRecentMessage(message)) {
       if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⭐ Ignorando mensagem antiga');
+        log('INFO', '⏭ Ignorando mensagem antiga');
       }
       return false;
     }
@@ -163,7 +184,24 @@ function shouldProcessMessage(message) {
 }
 
 /**
- * 🔥 HANDLER PRINCIPAL - VERSÃO COM VENDAS CONSULTIVAS
+ * 🔥 NOVO: Calcula tempo de resposta do lead (para detectar chatbot)
+ */
+function calculateLeadResponseTime(jid) {
+  const now = Date.now();
+  const lastTimestamp = lastUserMessageTimestamp.get(jid);
+  
+  if (!lastTimestamp) {
+    return null; // Primeira mensagem, não há tempo de resposta
+  }
+  
+  const responseTimeMs = now - lastTimestamp;
+  const responseTimeSec = Math.floor(responseTimeMs / 1000);
+  
+  return responseTimeSec;
+}
+
+/**
+ * 🔥 HANDLER PRINCIPAL - VERSÃO COM PROSPECÇÃO ATIVA E BLOQUEIO INTELIGENTE
  */
 export async function handleIncomingMessage(sock, message) {
   try {
@@ -189,37 +227,63 @@ export async function handleIncomingMessage(sock, message) {
       processedMessages.add(messageId);
     }
 
-    // 🔥 BLOQUEIO APENAS PARA MENSAGENS RECENTES DO OWNER
+    // ==========================================
+    // 🔥 SISTEMA DE BLOQUEIO INTELIGENTE
+    // ==========================================
+    
     if (message?.key?.fromMe) {
-      const clientPhone = extractPhoneNumber(jid);
+      // 🔥 CORREÇÃO CRÍTICA: Usar remoteJid para identificar destinatário ESPECÍFICO
+      const targetJid = message.key.remoteJid;
+      const clientPhone = extractPhoneNumber(targetJid);
       
       if (isRecentMessage(message)) {
-        const isAlreadyBlocked = await isBotBlockedForUser(jid);
-        
-        if (!isAlreadyBlocked) {
-          log('INFO', `👤 Owner enviou mensagem RECENTE para ${clientPhone} - Bloqueando IA`);
+        try {
+          // 🔥 NOVA LÓGICA: Incrementa contador de mensagens do owner
+          const ownerMsgCount = await incrementOwnerMessageCount(targetJid);
           
-          try {
-            await blockBotForUser(jid);
-            log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu atendimento`);
-          } catch (err) {
-            log('WARNING', `⚠️ Erro ao bloquear IA: ${err.message}`);
+          log('INFO', `👤 Owner enviou mensagem para ${clientPhone} (contador: ${ownerMsgCount})`);
+          
+          // 🔥 PRIMEIRA MENSAGEM: Marca como prospecção ativa, mas NÃO bloqueia
+          if (ownerMsgCount === 1) {
+            await setOwnerProspecting(targetJid, true);
+            log('SUCCESS', `🎯 Prospecção ativa iniciada para ${clientPhone} - IA PERMANECE ATIVA`);
           }
-        } else {
-          if (process.env.DEBUG_MODE === 'true') {
-            log('INFO', `ℹ️ IA já estava bloqueada para ${clientPhone}`);
+          
+          // 🔥 SEGUNDA MENSAGEM: Bloqueia IA APENAS para este JID específico
+          else if (ownerMsgCount === 2) {
+            await blockBotForUser(targetJid);
+            log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu (2ª mensagem)`);
           }
+          
+          // Mensagens adicionais apenas reforçam o bloqueio
+          else {
+            const isAlreadyBlocked = await isBotBlockedForUser(targetJid);
+            if (!isAlreadyBlocked) {
+              await blockBotForUser(targetJid);
+              log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu`);
+            } else {
+              if (process.env.DEBUG_MODE === 'true') {
+                log('INFO', `ℹ️ IA já estava bloqueada para ${clientPhone}`);
+              }
+            }
+          }
+          
+        } catch (err) {
+          log('WARNING', `⚠️ Erro ao processar mensagem do owner: ${err.message}`);
         }
       } else {
         if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', `⭐ Ignorando mensagem ANTIGA do owner para ${clientPhone}`);
+          log('INFO', `⏭ Ignorando mensagem ANTIGA do owner para ${clientPhone}`);
         }
       }
       
-      return;
+      return; // Owner não gera resposta da IA
     }
 
-    // 🔥 VERIFICAÇÃO DE BLOQUEIO COM AUTO-DESBLOQUEIO
+    // ==========================================
+    // 🔥 VERIFICAÇÃO DE BLOQUEIO (IA desabilitada para este JID?)
+    // ==========================================
+    
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
@@ -231,6 +295,31 @@ export async function handleIncomingMessage(sock, message) {
     if (isBlocked) {
       const clientPhone = extractPhoneNumber(jid);
       log('WARNING', `🚫 MENSAGEM IGNORADA - Bot bloqueado para ${clientPhone} (Owner em atendimento)`);
+      return;
+    }
+
+    // ==========================================
+    // 🔥 DETECÇÃO DE SOLICITAÇÃO DE ATENDIMENTO HUMANO
+    // ==========================================
+    
+    const wantsHumanHandoff = detectHumanHandoffRequest(messageText);
+    
+    if (wantsHumanHandoff) {
+      const clientPhone = extractPhoneNumber(jid);
+      const pushName = message.pushName || 'Cliente';
+      
+      log('INFO', `🤝 ${pushName} solicitou atendimento humano - Transferindo...`);
+      
+      // Bloqueia IA e notifica
+      await blockBotForUser(jid);
+      
+      const handoffMessage = `Claro, ${pushName}! Vou transferir você para o Roberto agora mesmo 😊\n\nEle já está ciente da nossa conversa e vai te atender em instantes!\n\nFoi um prazer conversar com você! 🤖💙`;
+      
+      await sock.sendMessage(jid, { text: handoffMessage }).catch((err) => {
+        log('WARNING', `⚠️ Erro ao enviar mensagem de handoff: ${err.message}`);
+      });
+      
+      log('SUCCESS', `✅ Handoff realizado para ${clientPhone}`);
       return;
     }
 
@@ -248,7 +337,32 @@ export async function handleIncomingMessage(sock, message) {
     
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}${cleanedMessage.length > 50 ? '...' : ''}"`);
 
+    // ==========================================
+    // 🔥 CÁLCULO DE TEMPO DE RESPOSTA (Detectar Chatbot)
+    // ==========================================
+    
+    const responseTime = calculateLeadResponseTime(jid);
+    
+    if (responseTime !== null) {
+      // Registra no banco para análise posterior
+      try {
+        await recordResponseTime(jid, responseTime);
+        
+        if (process.env.DEBUG_MODE === 'true') {
+          log('INFO', `⏱️ Tempo de resposta: ${responseTime}s`);
+        }
+      } catch (err) {
+        log('WARNING', `⚠️ Erro ao registrar tempo de resposta: ${err.message}`);
+      }
+    }
+    
+    // Atualiza timestamp da última mensagem do usuário
+    lastUserMessageTimestamp.set(jid, now);
+
+    // ==========================================
     // 🔥 VERIFICAÇÃO: Primeira interação
+    // ==========================================
+    
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
@@ -259,7 +373,25 @@ export async function handleIncomingMessage(sock, message) {
     
     const isFirstContact = !userExists;
     
-    // 🔥 PRIMEIRA MENSAGEM = SEMPRE LEAD
+    // ==========================================
+    // 🔥 DETECÇÃO DE PROSPECÇÃO ATIVA
+    // ==========================================
+    
+    let isOwnerProspecting = false;
+    try {
+      isOwnerProspecting = await checkIfOwnerProspecting(jid);
+    } catch (err) {
+      log('WARNING', `⚠️ Erro ao verificar prospecção: ${err.message}`);
+    }
+    
+    if (isOwnerProspecting) {
+      log('INFO', `🎯 MODO PROSPECÇÃO ATIVA para ${phone}`);
+    }
+    
+    // ==========================================
+    // 🔥 PRIMEIRA MENSAGEM
+    // ==========================================
+    
     if (isFirstContact) {
       const hasLeadKeywords = isNewLead(cleanedMessage);
       
@@ -277,8 +409,15 @@ export async function handleIncomingMessage(sock, message) {
       
       await simulateTyping(sock, jid, 1500);
       
-      // 🔥 Sempre usa mensagem de LEAD na primeira interação
-      const welcomeMsg = await generateWelcomeMessage(pushName, true);
+      // 🔥 Se owner iniciou prospecção, IA usa abordagem reveladora
+      const isProspectionMode = isOwnerProspecting;
+      
+      const welcomeMsg = await generateWelcomeMessage(
+        pushName, 
+        true, // sempre lead na primeira mensagem
+        isProspectionMode, // indica se é prospecção ativa
+        responseTime // passa tempo de resposta para análise
+      );
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch((err) => {
         log('WARNING', `⚠️ Erro ao enviar mensagem: ${err.message}`);
@@ -303,7 +442,11 @@ export async function handleIncomingMessage(sock, message) {
         log('WARNING', `⚠️ Erro ao salvar histórico no DB: ${err.message}`);
       }
       
-      log('SUCCESS', `✅ Boas-vindas enviadas (LEAD - Vendas Consultivas Ativas)`);
+      if (isProspectionMode) {
+        log('SUCCESS', `✅ Boas-vindas enviadas (PROSPECÇÃO ATIVA - Revelação IA)`);
+      } else {
+        log('SUCCESS', `✅ Boas-vindas enviadas (LEAD - Vendas Consultivas Ativas)`);
+      }
       
       // 🔥 Log de estatísticas de vendas
       if (process.env.DEBUG_MODE === 'true') {
@@ -318,7 +461,10 @@ export async function handleIncomingMessage(sock, message) {
       return;
     }
 
-    // 🔥 MENSAGENS SEGUINTES - PROCESSO DE VENDAS
+    // ==========================================
+    // 🔥 MENSAGENS SEGUINTES - PROCESSO DE VENDAS/PROSPECÇÃO
+    // ==========================================
+    
     log('INFO', `🔨 Processando mensagem de ${pushName}`);
     
     await saveUser(jid, { name: pushName });
@@ -331,16 +477,44 @@ export async function handleIncomingMessage(sock, message) {
     
     try {
       if (isLead) {
-        // 🔥 PROCESSAMENTO DE LEAD COM VENDAS CONSULTIVAS
-        aiResponse = await processLeadMessage(phone, pushName, cleanedMessage);
+        // 🔥 PROCESSAMENTO DE LEAD COM VENDAS CONSULTIVAS / PROSPECÇÃO
+        
+        // 🔥 NOVO: Detecta tipo de interlocutor se for prospecção ativa
+        let interlocutorType = null;
+        
+        if (isOwnerProspecting && responseTime !== null) {
+          try {
+            interlocutorType = await detectInterlocutorType(
+              phone,
+              responseTime,
+              cleanedMessage
+            );
+            
+            log('INFO', `🕵️ Interlocutor detectado: ${interlocutorType}`);
+          } catch (err) {
+            log('WARNING', `⚠️ Erro ao detectar interlocutor: ${err.message}`);
+          }
+        }
+        
+        // 🔥 Processa mensagem com contexto de prospecção
+        aiResponse = await processLeadMessage(
+          phone, 
+          pushName, 
+          cleanedMessage,
+          {
+            isProspecting: isOwnerProspecting,
+            interlocutorType: interlocutorType,
+            responseTime: responseTime
+          }
+        );
         
         // 🔥 Verifica se deve enviar link da fanpage
-        // (geralmente quando cliente pede mais informações ou demonstração)
         if (shouldSendFanpageLink(cleanedMessage) || 
             cleanedMessage.toLowerCase().includes('quero') ||
-            cleanedMessage.toLowerCase().includes('interesse')) {
+            cleanedMessage.toLowerCase().includes('interesse') ||
+            cleanedMessage.toLowerCase().includes('teste') ||
+            cleanedMessage.toLowerCase().includes('demonstra')) {
           
-          // Aguarda um pouco antes de enviar fanpage
           await simulateTyping(sock, jid, 1000);
           
           await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch((err) => {
@@ -350,7 +524,11 @@ export async function handleIncomingMessage(sock, message) {
           log('SUCCESS', `📱 Link da fanpage enviado`);
         }
         
-        log('SUCCESS', `✅ Resposta IA gerada (LEAD - Vendas Consultivas)`);
+        if (isOwnerProspecting) {
+          log('SUCCESS', `✅ Resposta IA gerada (PROSPECÇÃO ATIVA)`);
+        } else {
+          log('SUCCESS', `✅ Resposta IA gerada (LEAD - Vendas Consultivas)`);
+        }
         
       } else {
         // 🔥 PROCESSAMENTO DE CLIENTE EXISTENTE
@@ -411,6 +589,7 @@ export async function processMessage(sock, message) {
  */
 export function resetProcessedMessages() {
   processedMessages.clear();
+  lastUserMessageTimestamp.clear();
   log('SUCCESS', '✅ Cache de mensagens processadas resetado');
 }
 
@@ -421,7 +600,8 @@ export function getHandlerStats() {
   return {
     botStartTime: new Date(BOT_START_TIME).toISOString(),
     processedMessagesCount: processedMessages.size,
-    debounceCacheSize: lastMessageTime.size
+    debounceCacheSize: lastMessageTime.size,
+    responseTimeCacheSize: lastUserMessageTimestamp.size
   };
 }
 
@@ -431,14 +611,15 @@ export function getHandlerStats() {
 export function showCompleteStats() {
   const handlerStats = getHandlerStats();
   
-  console.log('\n📊 ╔═══════════════════════════════════════════╗');
+  console.log('\n📊 ╔═══════════════════════════════════════╗');
   console.log('📊 ESTATÍSTICAS COMPLETAS DO SISTEMA');
-  console.log('📊 ╚═══════════════════════════════════════════╝');
+  console.log('📊 ╚═══════════════════════════════════════╝');
   console.log('');
   console.log('🤖 HANDLER:');
   console.log(`   Início do Bot: ${handlerStats.botStartTime}`);
   console.log(`   Mensagens processadas: ${handlerStats.processedMessagesCount}`);
   console.log(`   Cache de debounce: ${handlerStats.debounceCacheSize}`);
+  console.log(`   Cache de tempo de resposta: ${handlerStats.responseTimeCacheSize}`);
   console.log('');
   
   try {
@@ -459,7 +640,7 @@ export function showCompleteStats() {
     console.log('⚠️ Não foi possível obter estatísticas de vendas');
   }
   
-  console.log('📊 ╚═══════════════════════════════════════════╝\n');
+  console.log('📊 ╚═══════════════════════════════════════╝\n');
 }
 
 /**
@@ -490,6 +671,15 @@ export async function showClientStatus(phone) {
     console.log(`   Plano Mencionado: ${details.salesContext.planMentioned ? 'Sim' : 'Não'}`);
     console.log(`   Necessidades Detectadas: ${details.salesContext.detectedNeeds.length}`);
     console.log(`   Objeções: ${details.salesContext.objections.length}`);
+    
+    // 🔥 NOVO: Informações de prospecção
+    if (details.salesContext.isProspecting) {
+      console.log('');
+      console.log('🎯 PROSPECÇÃO ATIVA:');
+      console.log(`   Interlocutor: ${details.salesContext.interlocutorType || 'Desconhecido'}`);
+      console.log(`   Segmento: ${details.salesContext.businessSegment || 'Não identificado'}`);
+    }
+    
     console.log('');
     console.log('💬 HISTÓRICO:');
     console.log(`   Total de mensagens: ${details.historySize}`);
@@ -505,11 +695,45 @@ export async function showClientStatus(phone) {
   console.log('═'.repeat(50) + '\n');
 }
 
+/**
+ * 🔥 NOVO: Lista conversas onde owner está prospectando
+ */
+export async function listOwnerConversations() {
+  console.log('\n🎯 CONVERSAS DE PROSPECÇÃO ATIVA');
+  console.log('═'.repeat(60));
+  
+  try {
+    const { getAllProspectingConversations } = await import('../services/database.js');
+    const conversations = await getAllProspectingConversations();
+    
+    if (!conversations || conversations.length === 0) {
+      console.log('   Nenhuma prospecção ativa no momento');
+      console.log('═'.repeat(60) + '\n');
+      return;
+    }
+    
+    conversations.forEach((conv, idx) => {
+      console.log(`\n${idx + 1}. ${conv.phone} (${conv.name || 'Nome não disponível'})`);
+      console.log(`   Mensagens do owner: ${conv.ownerMessageCount}`);
+      console.log(`   IA bloqueada: ${conv.isBotBlocked ? 'Sim' : 'Não'}`);
+      console.log(`   Último contato: ${conv.lastContact ? new Date(conv.lastContact).toLocaleString() : 'N/A'}`);
+    });
+    
+    console.log('\n═'.repeat(60));
+    console.log(`Total: ${conversations.length} prospecção(ões) ativa(s)\n`);
+    
+  } catch (err) {
+    console.log(`❌ Erro ao listar conversas: ${err.message}`);
+    console.log('═'.repeat(60) + '\n');
+  }
+}
+
 export default {
   handleIncomingMessage,
   processMessage,
   resetProcessedMessages,
   getHandlerStats,
   showCompleteStats,
-  showClientStatus
+  showClientStatus,
+  listOwnerConversations
 };
