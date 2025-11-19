@@ -37,7 +37,6 @@ import {
   shouldSendFanpageLink,
   addToHistory,
   getSalesStats,
-  detectInterlocutorType,
   analyzeProspectionMessage
 } from '../services/ai.js';
 
