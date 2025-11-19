@@ -28,7 +28,6 @@ import {
   recordResponseTime,
   getLastResponseTime,
   setOwnerProspecting,
-  isOwnerProspecting as checkIfOwnerProspecting
 } from '../services/database.js';
 
 import {
@@ -377,7 +376,8 @@ export async function handleIncomingMessage(sock, message) {
     
     let isOwnerProspecting = false;
     try {
-      isOwnerProspecting = await checkIfOwnerProspecting(jid);
+      const user = await getUser(jid);
+      isOwnerProspecting = user?.isOwnerProspecting || false;
     } catch (err) {
       log('WARNING', `⚠️ Erro ao verificar prospecção: ${err.message}`);
     }
