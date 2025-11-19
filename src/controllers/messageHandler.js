@@ -485,8 +485,7 @@ export async function handleIncomingMessage(sock, message) {
         
         if (isOwnerProspecting && responseTime !== null) {
           try {
-            interlocutorType = await detectInterlocutorType(
-              phone,
+            interlocutorType = detectInterlocutorType(
               responseTime,
               cleanedMessage
             );
