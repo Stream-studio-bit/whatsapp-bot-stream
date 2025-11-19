@@ -7,6 +7,7 @@ dotenv.config();
  */
 export const PROMPT_VERSION = '4.0.0';
 export const LAST_UPDATED = '2025-02-18';
+export const FANPAGE_MESSAGE = "🌐 Acesse nossa fanpage:\nhttps://bot-whatsapp-450420.web.app/\n\nLá você encontra:\n✅ Demonstração completa funcionando\n✅ Exemplos reais de conversas\n✅ Formulário para teste gratuito\n✅ Todas as informações detalhadas\n\n📱 Ou fale direto com Roberto: (13) 99606-9536";
 export const UPDATE_NOTES = 'Sistema de prospecção ativa B2B com detecção de interlocutor';
 
 /**
