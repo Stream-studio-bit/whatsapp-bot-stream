@@ -162,7 +162,7 @@ export function addToHistory(phone, role, content, metadata = {}) {
 /**
  * 🔥 ANALISA MENSAGEM PARA CONTEXTO DE PROSPECÇÃO
  */
-function analyzeProspectionMessage(message, responseTimeSeconds) {
+export function analyzeProspectionMessage(message, responseTimeSeconds) {
   const analysis = {
     // Detecções temporais
     likelyChatbot: responseTimeSeconds !== null && responseTimeSeconds < 5,
@@ -1209,3 +1209,19 @@ export default {
   getCurrentProspectionStage,
   listProspectionsByStage
 };
+/**
+ * 🔥 Retorna estatísticas de vendas
+ */
+export function getSalesStats() {
+  const stats = getProspectionStats();
+  return {
+    totalLeads: stats.totalProspections,
+    byStage: stats.byStage,
+    byPlan: {
+      basico: 0,
+      completo: 0,
+      indeciso: 0,
+      none: stats.totalProspections
+    }
+  };
+}

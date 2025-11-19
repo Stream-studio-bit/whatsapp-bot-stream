@@ -42,7 +42,9 @@ import {
   analyzeProspectionMessage
 } from '../services/ai.js';
 
-import { FANPAGE_MESSAGE } from '../utils/knowledgeBase.js';
+import { 
+  detectInterlocutorType
+} from '../utils/knowledgeBase.js';
 
 const lastMessageTime = new Map();
 const DEBOUNCE_DELAY = 500;
