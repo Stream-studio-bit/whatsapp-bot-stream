@@ -351,8 +351,9 @@ async function connectWhatsApp() {
       log('SUCCESS', '✅ MongoDB conectado');
     }
 
-    const { version } = await fetchLatestBaileysVersion()
-      .catch(() => ({ version: [2, 3000, 0] }));
+    // 🔥 FIX: Versão fixa para evitar problema do rate limit do GitHub
+    const version = [2, 3000, 0];
+    log('INFO', `📦 Usando versão Baileys: ${version.join('.')}`);
 
     const db = mongoClient.db('baileys_auth');
     const collection = db.collection(SESSION_ID);
