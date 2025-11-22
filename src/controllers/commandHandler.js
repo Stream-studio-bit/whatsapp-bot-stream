@@ -376,7 +376,7 @@ export async function quickStatus() {
  * 🆕 NOVA FUNÇÃO: Lista todos os emails capturados
  */
 export async function listCapturedEmails() {
-  const { getCapturedEmails } = await import('./database.js');
+  const { getCapturedEmails } = await import('../services/database.js');
   const emails = getCapturedEmails();
   
   if (emails.length === 0) {
