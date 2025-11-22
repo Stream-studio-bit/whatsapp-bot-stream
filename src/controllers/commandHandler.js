@@ -40,19 +40,29 @@ dotenv.config();
 
 /**
  * Mostra estatísticas do bot no console
+ * 🆕 ATUALIZADA: Inclui estatísticas de conversão
  */
 export function showStats() {
   const stats = getStats();
   const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  console.log(`\n📊 ╔═══════════════════════════════════════════╗`);
+  console.log(`\n📊 ╔═════════════════════════════════════════════╗`);
   console.log(`📊 ESTATÍSTICAS DO BOT [${timestamp}]`);
-  console.log(`📊 ╚═══════════════════════════════════════════╝`);
+  console.log(`📊 ╚═════════════════════════════════════════════╝`);
   console.log(`👥 Total de usuários: ${stats.totalUsers}`);
   console.log(`🎯 Novos leads: ${stats.newLeads}`);
   console.log(`🔄 Clientes recorrentes: ${stats.returningClients}`);
   console.log(`🚫 Em atendimento manual: ${stats.usersInManualAttendance}`);
-  console.log(`📊 ╚═══════════════════════════════════════════╝\n`);
+  
+  // 🆕 ESTATÍSTICAS DE CONVERSÃO
+  console.log('');
+  console.log('📈 CONVERSÕES:');
+  console.log(`   📧 Emails capturados: ${stats.emailsCaptured || 0}`);
+  console.log(`   🎁 Avaliações solicitadas: ${stats.evaluationsRequested || 0}`);
+  console.log(`   👀 Demonstrações vistas: ${stats.demonstrationsViewed || 0}`);
+  console.log(`   📊 Taxa de conversão: ${stats.conversionRate || '0%'}`);
+  
+  console.log(`📊 ╚═════════════════════════════════════════════╝\n`);
 }
 
 /**
@@ -69,9 +79,9 @@ export async function listBlockedUsers() {
   
   const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  console.log(`\n🚫 ╔═══════════════════════════════════════════╗`);
+  console.log(`\n🚫 ╔═════════════════════════════════════════════╗`);
   console.log(`🚫 USUÁRIOS EM ATENDIMENTO MANUAL [${timestamp}]`);
-  console.log(`🚫 ╚═══════════════════════════════════════════╝`);
+  console.log(`🚫 ╚═════════════════════════════════════════════╝`);
   
   for (const [index, user] of blocked.entries()) {
     const blockedTime = new Date(user.blockedAt).toLocaleString('pt-BR');
@@ -106,7 +116,7 @@ export async function listBlockedUsers() {
     console.log('');
   }
   
-  console.log(`🚫 ╚═══════════════════════════════════════════╝\n`);
+  console.log(`🚫 ╚═════════════════════════════════════════════╝\n`);
 }
 
 /**
@@ -122,9 +132,9 @@ export async function listAllUsers() {
   
   const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  console.log(`\n👥 ╔═══════════════════════════════════════════╗`);
+  console.log(`\n👥 ╔═════════════════════════════════════════════╗`);
   console.log(`👥 TODOS OS USUÁRIOS [${timestamp}]`);
-  console.log(`👥 ╚═══════════════════════════════════════════╝`);
+  console.log(`👥 ╚═════════════════════════════════════════════╝`);
   
   for (const [index, user] of users.entries()) {
     const type = user.isNewLead ? '🎯 LEAD' : '🔄 CLIENTE';
@@ -156,7 +166,7 @@ export async function listAllUsers() {
     console.log('');
   }
   
-  console.log(`👥 ╚═══════════════════════════════════════════╝\n`);
+  console.log(`👥 ╚═════════════════════════════════════════════╝\n`);
 }
 
 /**
@@ -182,9 +192,9 @@ export async function showUserDetails(phone) {
   const formattedPhone = formatPhoneNumber(user.phone);
   const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  console.log(`\n👤 ╔═══════════════════════════════════════════╗`);
+  console.log(`\n👤 ╔═════════════════════════════════════════════╗`);
   console.log(`👤 DETALHES DO USUÁRIO [${timestamp}]`);
-  console.log(`👤 ╚═══════════════════════════════════════════╝`);
+  console.log(`👤 ╚═════════════════════════════════════════════╝`);
   console.log(`Nome: ${user.name}`);
   console.log(`Telefone: ${formattedPhone}`);
   console.log(`Tipo: ${user.isNewLead ? '🎯 Lead' : '🔄 Cliente'}`);
@@ -214,7 +224,7 @@ export async function showUserDetails(phone) {
     }
   }
   
-  console.log(`👤 ╚═══════════════════════════════════════════╝\n`);
+  console.log(`👤 ╚═════════════════════════════════════════════╝\n`);
 }
 
 /**
@@ -257,14 +267,14 @@ export async function backupData(filename = null) {
     // Por enquanto, apenas retorna os dados
     const displayTime = new Date().toLocaleTimeString('pt-BR');
     
-    console.log(`\n💾 ╔═══════════════════════════════════════════╗`);
+    console.log(`\n💾 ╔═════════════════════════════════════════════╗`);
     console.log(`💾 BACKUP DOS DADOS [${displayTime}]`);
-    console.log(`💾 ╚═══════════════════════════════════════════╝`);
+    console.log(`💾 ╚═════════════════════════════════════════════╝`);
     console.log(`Total de usuários: ${data.users.length}`);
     console.log(`Usuários bloqueados: ${data.blockedUsers.length}`);
     console.log(`Exportado em: ${data.exportedAt}`);
     console.log(`Arquivo sugerido: ${finalFilename}`);
-    console.log(`💾 ╚═══════════════════════════════════════════╝\n`);
+    console.log(`💾 ╚═════════════════════════════════════════════╝\n`);
     
     log('SUCCESS', `✅ Backup criado com sucesso! (${data.users.length} usuários)`);
     
@@ -309,9 +319,9 @@ export async function removeUser(phone) {
 export async function resetSystem() {
   const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  console.log(`\n⚠️ ═══════════════════════════════════════════`);
+  console.log(`\n⚠️ ═══════════════════════════════════════════════`);
   console.log(`⚠️ ATENÇÃO: RESETANDO TODO O SISTEMA [${timestamp}]`);
-  console.log(`⚠️ ═══════════════════════════════════════════\n`);
+  console.log(`⚠️ ═══════════════════════════════════════════════\n`);
   
   // Faz backup antes de limpar
   console.log(`📦 Criando backup de segurança...\n`);
@@ -322,7 +332,7 @@ export async function resetSystem() {
   
   console.log(`✅ Sistema resetado com sucesso!`);
   console.log(`💾 Backup disponível caso necessário.`);
-  console.log(`⚠️ ═══════════════════════════════════════════\n`);
+  console.log(`⚠️ ═══════════════════════════════════════════════\n`);
   
   log('WARNING', `🔄 Sistema resetado (backup criado)`);
   
@@ -337,9 +347,9 @@ export async function quickStatus() {
   const blocked = getBlockedUsers();
   const timestamp = new Date().toLocaleTimeString('pt-BR');
   
-  console.log(`\n⚡ ═══════════════════════════════════════════`);
+  console.log(`\n⚡ ═══════════════════════════════════════════════`);
   console.log(`⚡ STATUS RÁPIDO DO BOT [${timestamp}]`);
-  console.log(`⚡ ═══════════════════════════════════════════`);
+  console.log(`⚡ ═══════════════════════════════════════════════`);
   console.log(`👥 ${stats.totalUsers} usuários | 🎯 ${stats.newLeads} leads | 🔄 ${stats.returningClients} clientes`);
   console.log(`🚫 ${stats.usersInManualAttendance} em atendimento manual`);
   
@@ -359,23 +369,57 @@ export async function quickStatus() {
     });
   }
   
-  console.log(`⚡ ═══════════════════════════════════════════\n`);
+  console.log(`⚡ ═══════════════════════════════════════════════\n`);
+}
+
+/**
+ * 🆕 NOVA FUNÇÃO: Lista todos os emails capturados
+ */
+export async function listCapturedEmails() {
+  const { getCapturedEmails } = await import('./database.js');
+  const emails = getCapturedEmails();
+  
+  if (emails.length === 0) {
+    console.log('\n✅ Nenhum email capturado ainda.\n');
+    return;
+  }
+  
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
+  
+  console.log(`\n📧 ╔═════════════════════════════════════════════╗`);
+  console.log(`📧 EMAILS CAPTURADOS [${timestamp}]`);
+  console.log(`📧 ╚═════════════════════════════════════════════╝`);
+  console.log(`Total: ${emails.length}\n`);
+  
+  emails.forEach((lead, idx) => {
+    const date = new Date(lead.capturedAt).toLocaleString('pt-BR');
+    
+    console.log(`${idx + 1}. ${lead.name}`);
+    console.log(`   📱 Telefone: ${formatPhoneNumber(lead.phone)}`);
+    console.log(`   📧 Email: ${lead.email}`);
+    console.log(`   📅 Capturado em: ${date}`);
+    console.log(`   🎁 Solicitou avaliação: ${lead.requestedEvaluation ? 'Sim ✅' : 'Não ❌'}`);
+    console.log('');
+  });
+  
+  console.log(`📧 ╚═════════════════════════════════════════════╝\n`);
 }
 
 /**
  * 🔥 NOVA FUNÇÃO: Menu de ajuda para comandos administrativos
  */
 export function showHelpMenu() {
-  console.log(`\n📖 ╔═══════════════════════════════════════════╗`);
+  console.log(`\n📖 ╔═════════════════════════════════════════════╗`);
   console.log(`📖 COMANDOS ADMINISTRATIVOS DISPONÍVEIS`);
-  console.log(`📖 ╚═══════════════════════════════════════════╝\n`);
+  console.log(`📖 ╚═════════════════════════════════════════════╝\n`);
   
-  console.log(`🔧 GERENCIAMENTO:`);
-  console.log(`   showStats()              - Mostra estatísticas completas`);
+  console.log(`📧 GERENCIAMENTO:`);
+  console.log(`   showStats()              - Estatísticas completas (+ conversões)`);
   console.log(`   quickStatus()            - Status rápido do sistema`);
   console.log(`   listBlockedUsers()       - Lista usuários bloqueados`);
   console.log(`   listAllUsers()           - Lista todos os usuários`);
-  console.log(`   showUserDetails(phone)   - Detalhes de um usuário específico`);
+  console.log(`   listCapturedEmails()     - 🆕 Lista emails capturados`);
+  console.log(`   showUserDetails(phone)   - Detalhes de usuário específico`);
   console.log(``);
   
   console.log(`🧹 LIMPEZA:`);
@@ -392,7 +436,7 @@ export function showHelpMenu() {
   console.log(`   showHelpMenu()           - Mostra este menu`);
   console.log(``);
   
-  console.log(`📖 ╚═══════════════════════════════════════════╝\n`);
+  console.log(`📖 ╚═════════════════════════════════════════════╝\n`);
   console.log(`💡 Dica: Todas as funções agora são assíncronas (use await)`);
   console.log(`💡 Exemplo: await listBlockedUsers()`);
   console.log(`💡 Debug: process.env.DEBUG_MODE = "true" para logs detalhados\n`);
@@ -415,5 +459,6 @@ export default {
   removeUser,
   resetSystem,
   quickStatus,
-  showHelpMenu
+  showHelpMenu,
+  listCapturedEmails  // 🆕 NOVA FUNÇÃO EXPORTADA
 };

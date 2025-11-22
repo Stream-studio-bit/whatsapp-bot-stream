@@ -158,9 +158,9 @@ export function addToHistory(phone, role, content, metadata = {}) {
     log('INFO', `📝 Mensagem adicionada: ${phone} [${role}] (${content.length} chars)`);
   }
 }
-
 /**
  * 🔥 ANALISA MENSAGEM PARA CONTEXTO DE PROSPECÇÃO
+ * ✅ ATUALIZADO: Detecta interesse em avaliação/teste e captura email
  */
 export function analyzeProspectionMessage(message, responseTimeSeconds) {
   const analysis = {
@@ -178,7 +178,13 @@ export function analyzeProspectionMessage(message, responseTimeSeconds) {
     askingPrice: false,
     showingInterest: false,
     hasObjection: false,
-    readyToTest: false
+    readyToTest: false,
+    
+    // 🆕 NOVOS SINAIS DE AVALIAÇÃO
+    wantsEvaluation: false,
+    providedEmail: false,
+    extractedEmail: null,
+    wantsDemonstration: false
   };
   
   const msg = message.toLowerCase();
@@ -218,9 +224,97 @@ export function analyzeProspectionMessage(message, responseTimeSeconds) {
     msg.includes('demonstração') ||
     msg.includes('ver funcionando');
   
+  // 🆕 DETECTA INTERESSE EM AVALIAÇÃO/TESTE
+  analysis.wantsEvaluation = 
+    msg.includes('avaliação') ||
+    msg.includes('avaliacao') ||
+    msg.includes('teste') ||
+    msg.includes('testar') ||
+    msg.includes('avaliar') ||
+    msg.includes('grátis') ||
+    msg.includes('gratis') ||
+    msg.includes('gratuito') ||
+    msg.includes('sem compromisso') ||
+    msg.includes('quero ver') ||
+    msg.includes('como funciona') ||
+    msg.includes('quero conhecer') ||
+    msg.includes('me mostra');
+  
+  // 🆕 DETECTA DEMONSTRAÇÃO
+  analysis.wantsDemonstration = 
+    msg.includes('demonstração') ||
+    msg.includes('demonstracao') ||
+    msg.includes('demo') ||
+    msg.includes('ver funcionando') ||
+    msg.includes('exemplo') ||
+    msg.includes('fanpage') ||
+    msg.includes('site');
+  
+  // 🆕 EXTRAI EMAIL SE FORNECIDO
+  const emailRegex = /[\w.-]+@[\w.-]+\.\w+/;
+  const emailMatch = message.match(emailRegex);
+  
+  if (emailMatch) {
+    analysis.providedEmail = true;
+    analysis.extractedEmail = emailMatch[0];
+  }
+  
   return analysis;
 }
 
+/**
+ * 🆕 NOVA FUNÇÃO: Gerencia solicitação de avaliação gratuita
+ */
+export function handleEvaluationRequest(customerName, email = null) {
+  if (email) {
+    // Cliente já forneceu email
+    return `Perfeito, ${customerName}! 🎉
+
+Email anotado: ${email}
+
+Nossa equipe da Stream Studio vai:
+1️⃣ Criar um protótipo personalizado pra vocês
+2️⃣ Configurar com informações do seu negócio
+3️⃣ Enviar por email em até 48h úteis
+
+Enquanto isso, quer ver uma demonstração pronta funcionando?
+🌐 https://bot-whatsapp-450420.web.app/
+
+Tem mais alguma dúvida que eu possa esclarecer? 😊`;
+  } else {
+    // Cliente demonstrou interesse mas não forneceu email
+    return `Que ótimo, ${customerName}! Adoraria mostrar como eu trabalho! 🎉
+
+Pra preparar uma **avaliação gratuita personalizada**, preciso de algumas informações:
+
+📧 **Qual o email da loja/responsável?**
+(Nossa equipe vai enviar um protótipo funcionando)
+
+Ou se preferir, pode ver uma demonstração funcionando agora:
+🌐 https://bot-whatsapp-450420.web.app/
+
+Lembrando: é tudo SEM COMPROMISSO! Só pra vocês verem na prática como eu posso ajudar 😊`;
+  }
+}
+
+/**
+ * 🆕 NOVA FUNÇÃO: Envia informações para demonstração
+ */
+export function sendDemonstrationInfo(customerName) {
+  return `Claro, ${customerName}! Vou te mostrar! 👀
+
+Acesse nossa fanpage aqui:
+🌐 https://bot-whatsapp-450420.web.app/
+
+Lá você vai encontrar:
+✅ Demonstração completa funcionando
+✅ Exemplos reais de conversas
+✅ Formulário para teste gratuito
+
+E se quiser uma avaliação PERSONALIZADA pro seu negócio, é só me passar o email que nossa equipe monta um protótipo específico! 📧
+
+Quer que eu explique mais alguma coisa? 😊`;
+}
 /**
  * 🔥 ATUALIZA ESTÁGIO DE PROSPECÇÃO
  */
@@ -239,50 +333,38 @@ function updateProspectionStage(phone, analysis, context) {
   // Lógica de progressão de estágios
   switch (currentStage) {
     case 'qualification':
-      // Progride para discovery se identificou interlocutor
       if (analysis.interlocutorType) {
         context.interlocutorType = analysis.interlocutorType;
-        
-        // Se é decisor, vai direto para discovery
         if (analysis.interlocutorType === 'decisor') {
           newStage = 'discovery';
         }
-        // Se é chatbot/atendente, continua tentando chegar ao decisor
       }
       break;
       
     case 'discovery':
-      // Progride para presentation se identificou segmento
       if (analysis.businessSegment) {
         context.businessSegment = analysis.businessSegment;
         newStage = 'presentation';
-      }
-      // Ou se fez perguntas suficientes
-      else if (context.questionsAsked >= 2) {
+      } else if (context.questionsAsked >= 2) {
         newStage = 'presentation';
       }
       break;
       
     case 'presentation':
-      // Progride para demonstration se mostrou interesse
       if (analysis.showingInterest || analysis.readyToTest) {
         newStage = 'demonstration';
-      }
-      // Ou se pitch foi enviado
-      else if (context.pitchSent) {
+      } else if (context.pitchSent) {
         newStage = 'demonstration';
       }
       break;
       
     case 'demonstration':
-      // Progride para pricing se perguntou preço
       if (analysis.askingPrice) {
         newStage = 'pricing';
       }
       break;
       
     case 'pricing':
-      // Pricing já é final, aguarda handoff ou mais perguntas
       break;
   }
   
@@ -319,18 +401,15 @@ function getProspectionInstructions(phone, customerName, context, analysis) {
   
   instructions += `**Perguntas feitas:** ${questionsAsked}\n\n`;
   
-  // Instruções específicas por estágio
   const stageInfo = PROSPECTION_STAGES[prospectStage];
   
   if (stageInfo) {
     instructions += `**Objetivo deste estágio:** ${stageInfo.objetivo}\n\n`;
   }
   
-  // Ações específicas
   switch (prospectStage) {
     case 'qualification':
       instructions += `**AÇÃO:**\n`;
-      
       if (!interlocutorType) {
         instructions += `1. Você ainda não identificou o interlocutor\n`;
         instructions += `2. Observe o tempo de resposta e padrões de linguagem\n`;
@@ -348,7 +427,6 @@ function getProspectionInstructions(phone, customerName, context, analysis) {
       
     case 'discovery':
       instructions += `**AÇÃO:**\n`;
-      
       if (!businessSegment && questionsAsked < 2) {
         instructions += `1. Faça perguntas para identificar o segmento:\n`;
         instructions += `   - "Qual é o segmento de vocês?"\n`;
@@ -364,7 +442,6 @@ function getProspectionInstructions(phone, customerName, context, analysis) {
       
     case 'presentation':
       instructions += `**AÇÃO:**\n`;
-      
       if (!pitchSent) {
         if (businessSegment) {
           const segment = BUSINESS_SEGMENTS[businessSegment];
@@ -391,7 +468,6 @@ function getProspectionInstructions(phone, customerName, context, analysis) {
       
     case 'pricing':
       instructions += `**AÇÃO:**\n`;
-      
       if (!pricingMentioned) {
         instructions += `1. Explique modelo de precificação completo:\n`;
         instructions += `${getPricingInfo(true)}\n\n`;
@@ -411,7 +487,6 @@ function getProspectionInstructions(phone, customerName, context, analysis) {
       break;
   }
   
-  // Alertas especiais baseados na análise
   if (analysis.handoffRequested) {
     instructions += `\n🚨 **ALERTA:** Cliente solicitou atendimento humano!\n`;
     instructions += `Transfira IMEDIATAMENTE usando mensagem de handoff.\n\n`;
@@ -439,29 +514,23 @@ export async function processProspectionMessage(phone, customerName, userMessage
     
     log('INFO', `🎯 Processando PROSPECÇÃO: ${customerName} (${phone})`);
     
-    // Registra tempo de resposta
     const responseTimeSeconds = recordResponseTime(phone);
-    
-    // Obtém contextos
     const history = getConversationHistory(phone);
     let context = getProspectionContext(phone);
     const isFirstMessage = history.length === 0;
     
-    // Se é primeira mensagem e owner iniciou, marca como prospecção
     if (isFirstMessage && isOwnerInitiated) {
       context.isProspecting = true;
       context.prospectStage = 'qualification';
       saveProspectionContext(phone, context);
     }
     
-    // Analisa mensagem
     const analysis = analyzeProspectionMessage(userMessage, responseTimeSeconds);
     
     if (process.env.DEBUG_MODE === 'true') {
       log('INFO', `📊 Análise: interlocutor=${analysis.interlocutorType}, segmento=${analysis.businessSegment}, tempo=${responseTimeSeconds}s`);
     }
     
-    // Atualiza contexto baseado na análise
     if (analysis.interlocutorType && !context.interlocutorType) {
       context.interlocutorType = analysis.interlocutorType;
     }
@@ -470,17 +539,14 @@ export async function processProspectionMessage(phone, customerName, userMessage
       context.businessSegment = analysis.businessSegment;
     }
     
-    // Incrementa perguntas se em discovery
     if (context.prospectStage === 'discovery') {
       context.questionsAsked++;
     }
     
     saveProspectionContext(phone, context);
     
-    // Atualiza estágio
     const newStage = updateProspectionStage(phone, analysis, context);
     
-    // System prompt com contexto de prospecção
     const baseSystemPrompt = getSystemPromptForProspection({
       customerName,
       interlocutorType: context.interlocutorType,
@@ -488,15 +554,8 @@ export async function processProspectionMessage(phone, customerName, userMessage
       prospectionStage: newStage
     });
     
-    // Instruções contextuais
-    const prospectionInstructions = getProspectionInstructions(
-      phone,
-      customerName,
-      context,
-      analysis
-    );
+    const prospectionInstructions = getProspectionInstructions(phone, customerName, context, analysis);
     
-    // System prompt completo
     const fullSystemPrompt = `${baseSystemPrompt}${prospectionInstructions}
 
 ## 📋 INFORMAÇÕES DO LEAD:
@@ -515,31 +574,22 @@ export async function processProspectionMessage(phone, customerName, userMessage
 - Seja direto e consultivo
 - Respeite o estágio atual`;
     
-    // Monta mensagens
     const messages = [
-      {
-        role: 'system',
-        content: fullSystemPrompt
-      },
+      { role: 'system', content: fullSystemPrompt },
       ...history.map(h => ({ role: h.role, content: h.content })),
-      {
-        role: 'user',
-        content: userMessage
-      }
+      { role: 'user', content: userMessage }
     ];
     
     if (process.env.DEBUG_MODE === 'true') {
       log('INFO', `📤 Enviando para IA: ${messages.length} mensagens | Estágio: ${newStage}`);
     }
     
-    // Chama IA
     const aiResponse = await callGroqAI(messages);
     
     if (!aiResponse || aiResponse.trim().length === 0) {
       throw new Error('Resposta vazia da IA');
     }
     
-    // Atualiza flags baseado na resposta
     if (newStage === 'presentation' && aiResponse.length > 100) {
       context.pitchSent = true;
       saveProspectionContext(phone, context);
@@ -550,14 +600,8 @@ export async function processProspectionMessage(phone, customerName, userMessage
       saveProspectionContext(phone, context);
     }
     
-    // Adiciona ao histórico
-    addToHistory(phone, 'user', userMessage, { 
-      responseTime: responseTimeSeconds,
-      stage: newStage
-    });
-    addToHistory(phone, 'assistant', aiResponse, {
-      stage: newStage
-    });
+    addToHistory(phone, 'user', userMessage, { responseTime: responseTimeSeconds, stage: newStage });
+    addToHistory(phone, 'assistant', aiResponse, { stage: newStage });
     
     log('SUCCESS', `✅ Resposta gerada [${newStage}]: ${customerName} - ${aiResponse.length} chars`);
     
@@ -580,21 +624,82 @@ export async function processProspectionMessage(phone, customerName, userMessage
     };
   }
 }
-
 /**
  * Processa mensagem de LEAD (modo reativo)
+ * ✅ ATUALIZADO: Prioriza captura de email e detecção de avaliação
  */
-export async function processLeadMessage(phone, customerName, userMessage) {
+export async function processLeadMessage(phone, customerName, userMessage, context = {}) {
   try {
     if (!phone || !customerName || !userMessage) {
       throw new Error('Parâmetros inválidos para processLeadMessage');
     }
     
-    log('INFO', `🤖 Processando mensagem de LEAD (reativo): ${customerName}`);
+    log('INFO', `🤖 Processando mensagem de LEAD: ${customerName}`);
     
     const history = getConversationHistory(phone);
-    const isFirstMessage = history.length === 0;
+    const responseTime = context.responseTime || null;
     
+    // 🆕 ANALISA MENSAGEM COM NOVOS SINAIS
+    const analysis = analyzeProspectionMessage(userMessage, responseTime);
+    
+    // 🆕 PRIORIDADE 1: Cliente quer avaliação/teste
+    if (analysis.wantsEvaluation) {
+      log('SUCCESS', `🎯 Cliente ${customerName} solicitou avaliação!`);
+      
+      if (analysis.providedEmail) {
+        // Email já fornecido - confirmar e agendar
+        const response = handleEvaluationRequest(customerName, analysis.extractedEmail);
+        
+        // 🔔 NOTIFICAR EQUIPE (log para integração futura)
+        log('SUCCESS', `📧 EMAIL CAPTURADO: ${analysis.extractedEmail} - ${customerName}`);
+        
+        addToHistory(phone, 'user', userMessage);
+        addToHistory(phone, 'assistant', response);
+        
+        return response;
+      } else {
+        // Solicitar email
+        const response = handleEvaluationRequest(customerName, null);
+        
+        addToHistory(phone, 'user', userMessage);
+        addToHistory(phone, 'assistant', response);
+        
+        return response;
+      }
+    }
+    
+    // 🆕 PRIORIDADE 2: Cliente quer ver demonstração
+    if (analysis.wantsDemonstration) {
+      log('SUCCESS', `👀 Cliente ${customerName} quer ver demonstração`);
+      
+      const response = sendDemonstrationInfo(customerName);
+      
+      addToHistory(phone, 'user', userMessage);
+      addToHistory(phone, 'assistant', response);
+      
+      return response;
+    }
+    
+    // 🆕 PRIORIDADE 3: Email fornecido sem contexto prévio
+    if (analysis.providedEmail && !analysis.wantsEvaluation) {
+      log('SUCCESS', `📧 EMAIL DETECTADO: ${analysis.extractedEmail} - ${customerName}`);
+      
+      const response = `Perfeito! Anotei o email: ${analysis.extractedEmail} 📧
+
+Vou encaminhar pra equipe da Stream Studio preparar uma avaliação GRATUITA personalizada pra vocês!
+
+Enquanto aguarda, quer saber mais sobre como eu trabalho? Ou prefere ver a demonstração na fanpage? 😊
+
+🌐 https://bot-whatsapp-450420.web.app/`;
+      
+      addToHistory(phone, 'user', userMessage);
+      addToHistory(phone, 'assistant', response);
+      
+      return response;
+    }
+    
+    // PROCESSAMENTO NORMAL (prospecção reativa)
+    const isFirstMessage = history.length === 0;
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     
     const systemPrompt = `Você é o Assistente Virtual da Stream Studio.
@@ -638,8 +743,8 @@ Fanpage: https://bot-whatsapp-450420.web.app/`;
     return aiResponse;
     
   } catch (error) {
-    log('ERROR', `❌ Erro no modo reativo: ${error.message}`);
-    return `Olá ${customerName}! 👋\n\nComo posso ajudar você hoje?`;
+    log('ERROR', `❌ Erro no modo lead: ${error.message}`);
+    return `Desculpe ${customerName}, estou com dificuldades técnicas. 😅\n\nMas o Roberto pode te atender: ${process.env.WHATSAPP_SUPPORT}`;
   }
 }
 
@@ -701,24 +806,39 @@ Contato ${ownerName}: ${process.env.WHATSAPP_SUPPORT}`;
 
 /**
  * Gera mensagem de boas-vindas
+ * ✅ ATUALIZADO: Nova abordagem "IA procurando emprego"
  */
-export async function generateWelcomeMessage(customerName, isLead = false) {
+export async function generateWelcomeMessage(customerName, isLead = false, isProspectionMode = false, responseTime = null) {
   try {
     const ownerName = process.env.OWNER_NAME || 'Roberto';
     
     if (isLead) {
-      return `Olá ${customerName}! 👋
+      // 🆕 NOVA MENSAGEM - "IA procurando emprego"
+      return `Oi! Eu sou a Sofia 🤖
 
-Sou o *Assistente Virtual da Stream Studio* 🤖
+Pode parecer estranho, mas... eu estou procurando emprego! 😊
 
-Posso te ajudar com:
-- Agente IA para WhatsApp
-- Desenvolvimento de sites
-- Design e logomarcas
-- Suporte técnico
+Sou uma Inteligência Artificial treinada pela Stream Studio e tenho habilidades que poderiam ajudar vocês:
 
-Como posso ajudar você? 😊`;
+✅ Atender clientes 24/7
+✅ Lembrar nome e histórico de cada cliente
+✅ Calcular valores e descontos automaticamente
+✅ Anotar pedidos sem erros
+✅ Nunca esquecer detalhes importantes
+
+**Quer ver como eu trabalho?** 
+Posso oferecer uma avaliação GRATUITA:
+
+1️⃣ Me passa o email da loja
+2️⃣ Nossa equipe monta um protótipo personalizado
+3️⃣ Vocês testam na prática sem compromisso!
+
+Ou se preferir, pode ver uma demonstração funcionando aqui:
+🌐 https://bot-whatsapp-450420.web.app/
+
+O que acha? Dá uma chance pra mim? 🙏`;
     } else {
+      // Cliente existente - manter lógica atual
       return `Olá *${customerName}*! 👋
 
 Que bom te ver por aqui!
@@ -759,7 +879,6 @@ export function getHistorySize(phone) {
 export function hasActiveHistory(phone) {
   return conversationCache.has(phone);
 }
-
 /**
  * 🔥 OBTÉM ESTATÍSTICAS DE PROSPECÇÃO
  */
@@ -867,7 +986,7 @@ export function showProspectionStats() {
   console.log(`⚡ Prospecções ativas: ${stats.activeProspections}`);
   console.log('');
   console.log('📊 Por Estágio:');
-  console.log(`   🔍 Qualificação: ${stats.byStage.qualification}`);
+  console.log(`   📝 Qualificação: ${stats.byStage.qualification}`);
   console.log(`   💡 Descoberta: ${stats.byStage.discovery}`);
   console.log(`   🎯 Apresentação: ${stats.byStage.presentation}`);
   console.log(`   🎁 Demonstração: ${stats.byStage.demonstration}`);
@@ -1084,19 +1203,9 @@ export function shouldSendFanpageLink(message) {
   if (!message || typeof message !== 'string') return false;
   
   const keywords = [
-    'fanpage',
-    'site',
-    'página',
-    'demonstração',
-    'ver mais',
-    'conhecer',
-    'acessar',
-    'link',
-    'endereço',
-    'quero ver',
-    'mostrar',
-    'próximo passo',
-    'como faço'
+    'fanpage', 'site', 'página', 'demonstração', 'ver mais',
+    'conhecer', 'acessar', 'link', 'endereço', 'quero ver',
+    'mostrar', 'próximo passo', 'como faço'
   ];
   
   const msg = message.toLowerCase();
@@ -1108,7 +1217,6 @@ export function shouldSendFanpageLink(message) {
  */
 export function shouldForwardToOwner(message) {
   if (!message || typeof message !== 'string') return false;
-  
   return detectHandoffRequest(message);
 }
 
@@ -1131,7 +1239,7 @@ export function markOwnerProspecting(phone, isProspecting = true) {
   if (isProspecting) {
     log('SUCCESS', `🎯 Prospecção iniciada: ${phone}`);
   } else {
-    log('INFO', `📴 Prospecção desativada: ${phone}`);
+    log('INFO', `🔴 Prospecção desativada: ${phone}`);
   }
   
   return true;
@@ -1142,7 +1250,6 @@ export function markOwnerProspecting(phone, isProspecting = true) {
  */
 export function isProspecting(phone) {
   if (!phone) return false;
-  
   const context = getProspectionContext(phone);
   return context.isProspecting === true;
 }
@@ -1152,7 +1259,6 @@ export function isProspecting(phone) {
  */
 export function getCurrentProspectionStage(phone) {
   if (!phone) return null;
-  
   const context = getProspectionContext(phone);
   return context.prospectStage;
 }
@@ -1183,6 +1289,26 @@ export function listProspectionsByStage(stage = null) {
   return prospections;
 }
 
+/**
+ * 🔥 Retorna estatísticas de vendas
+ */
+export function getSalesStats() {
+  const stats = getProspectionStats();
+  return {
+    totalLeads: stats.totalProspections,
+    byStage: stats.byStage,
+    byPlan: {
+      basico: 0,
+      completo: 0,
+      indeciso: 0,
+      none: stats.totalProspections
+    }
+  };
+}
+
+/**
+ * 📦 EXPORT DEFAULT
+ */
 export default {
   processProspectionMessage,
   processLeadMessage,
@@ -1207,21 +1333,10 @@ export default {
   markOwnerProspecting,
   isProspecting,
   getCurrentProspectionStage,
-  listProspectionsByStage
+  listProspectionsByStage,
+  getSalesStats,
+  // 🆕 NOVAS FUNÇÕES DE AVALIAÇÃO
+  analyzeProspectionMessage,
+  handleEvaluationRequest,
+  sendDemonstrationInfo
 };
-/**
- * 🔥 Retorna estatísticas de vendas
- */
-export function getSalesStats() {
-  const stats = getProspectionStats();
-  return {
-    totalLeads: stats.totalProspections,
-    byStage: stats.byStage,
-    byPlan: {
-      basico: 0,
-      completo: 0,
-      indeciso: 0,
-      none: stats.totalProspections
-    }
-  };
-}

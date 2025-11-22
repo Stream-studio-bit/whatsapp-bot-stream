@@ -28,6 +28,7 @@ import {
   recordResponseTime,
   getLastResponseTime,
   setOwnerProspecting,
+  updateUser // 🆕 ADICIONADO para atualização de email
 } from '../services/database.js';
 
 import {
@@ -37,7 +38,8 @@ import {
   shouldSendFanpageLink,
   addToHistory,
   getSalesStats,
-  analyzeProspectionMessage
+  analyzeProspectionMessage,
+  handleEvaluationRequest // 🆕 ADICIONADO para gerenciar avaliação
 } from '../services/ai.js';
 
 import {
@@ -199,7 +201,6 @@ function calculateLeadResponseTime(jid) {
   
   return responseTimeSec;
 }
-
 /**
  * 🔥 HANDLER PRINCIPAL - VERSÃO COM PROSPECÇÃO ATIVA E BLOQUEIO INTELIGENTE
  */
@@ -388,9 +389,8 @@ export async function handleIncomingMessage(sock, message) {
     if (isOwnerProspecting) {
       log('INFO', `🎯 MODO PROSPECÇÃO ATIVA para ${phone}`);
     }
-    
     // ==========================================
-    // 🔥 PRIMEIRA MENSAGEM
+    // 🔥 PRIMEIRA MENSAGEM - 🆕 COM DETECÇÃO DE EMAIL
     // ==========================================
     
     if (isFirstContact) {
@@ -400,6 +400,48 @@ export async function handleIncomingMessage(sock, message) {
         name: pushName,
         isNewLead: true
       });
+      
+      // 🆕 MUDANÇA 1: DETECTA SE JÁ VEIO COM EMAIL (raro mas possível)
+      const emailRegex = /[\w.-]+@[\w.-]+\.\w+/;
+      const emailMatch = cleanedMessage.match(emailRegex);
+      
+      if (emailMatch) {
+        const email = emailMatch[0];
+        log('SUCCESS', `🎯 EMAIL CAPTURADO na primeira mensagem: ${email}`);
+        
+        // Salva email no contexto do usuário
+        await updateUser(jid, { 
+          email: email,
+          emailCapturedAt: new Date()
+        });
+        
+        await simulateTyping(sock, jid, 1500);
+        
+        const emailResponse = `Perfeito, ${pushName}! 🎉
+
+Email anotado: ${email}
+
+Vou encaminhar pra equipe da Stream Studio preparar uma avaliação GRATUITA personalizada!
+
+Enquanto aguarda, quer ver uma demonstração funcionando?
+🌐 https://bot-whatsapp-450420.web.app/
+
+Tem mais alguma dúvida? 😊`;
+        
+        await sock.sendMessage(jid, { text: emailResponse }).catch((err) => {
+          log('WARNING', `⚠️ Erro ao enviar resposta: ${err.message}`);
+        });
+        
+        addToHistory(phone, 'user', cleanedMessage);
+        addToHistory(phone, 'assistant', emailResponse);
+        
+        // 🔔 NOTIFICAR OWNER (implementar integração futura)
+        log('SUCCESS', `🔔 CONVERSÃO! ${pushName} (${phone}) → ${email}`);
+        
+        return;
+      }
+      
+      // ... continua com lógica normal de boas-vindas ...
       
       if (hasLeadKeywords) {
         await markAsNewLead(jid, pushName);
@@ -463,7 +505,7 @@ export async function handleIncomingMessage(sock, message) {
     }
 
     // ==========================================
-    // 🔥 MENSAGENS SEGUINTES - PROCESSO DE VENDAS/PROSPECÇÃO
+    // 🔥 MENSAGENS SEGUINTES - 🆕 COM PRIORIZAÇÃO DE EMAIL
     // ==========================================
     
     log('INFO', `🔨 Processando mensagem de ${pushName}`);
@@ -471,6 +513,43 @@ export async function handleIncomingMessage(sock, message) {
     await saveUser(jid, { name: pushName });
     
     const isLead = await isLeadUser(jid);
+    
+    // 🆕 MUDANÇA 2: DETECTA EMAIL EM QUALQUER MENSAGEM (PRIORIDADE MÁXIMA)
+    const emailRegex = /[\w.-]+@[\w.-]+\.\w+/;
+    const emailMatch = cleanedMessage.match(emailRegex);
+
+    if (emailMatch && isLead) {
+      const email = emailMatch[0];
+      const user = await getUser(jid);
+      
+      // Só processa se for novo email (não capturado antes)
+      if (!user?.email || user.email !== email) {
+        log('SUCCESS', `🎯 NOVO EMAIL CAPTURADO: ${email} - ${pushName}`);
+        
+        await updateUser(jid, {
+          email: email,
+          emailCapturedAt: new Date()
+        });
+        
+        await simulateTyping(sock, jid, 1500);
+        
+        const emailResponse = handleEvaluationRequest(pushName, email);
+        
+        await sock.sendMessage(jid, { text: emailResponse }).catch((err) => {
+          log('WARNING', `⚠️ Erro ao enviar resposta: ${err.message}`);
+        });
+        
+        addToHistory(phone, 'user', cleanedMessage);
+        addToHistory(phone, 'assistant', emailResponse);
+        
+        // 🔔 NOTIFICAR OWNER
+        log('SUCCESS', `🔔 CONVERSÃO! ${pushName} (${phone}) → ${email}`);
+        
+        return; // Não processa mais nada, email é prioridade máxima
+      }
+    }
+    
+    // ... continua com processamento normal ...
     
     await simulateTyping(sock, jid, 1500);
     
@@ -516,6 +595,8 @@ export async function handleIncomingMessage(sock, message) {
             cleanedMessage.toLowerCase().includes('demonstra')) {
           
           await simulateTyping(sock, jid, 1000);
+          
+          const FANPAGE_MESSAGE = `🌐 Acesse nossa fanpage e veja demonstrações:\nhttps://bot-whatsapp-450420.web.app/`;
           
           await sock.sendMessage(jid, { text: FANPAGE_MESSAGE }).catch((err) => {
             log('WARNING', `⚠️ Erro ao enviar fanpage: ${err.message}`);
@@ -570,7 +651,6 @@ export async function handleIncomingMessage(sock, message) {
     }
   }
 }
-
 /**
  * Processa mensagem (wrapper)
  */
