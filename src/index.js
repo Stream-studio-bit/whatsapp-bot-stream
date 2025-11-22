@@ -283,14 +283,14 @@ function startStabilizationPeriod() {
   
   stabilizationTimeout = setTimeout(() => {
     isStabilizing = false;
-    consecutive440Errors = 0; // Reset após estabilização
+    consecutive440Errors = 0;
     log('SUCCESS', '✅ Período de estabilização concluído - Bot totalmente operacional');
   }, POST_AUTH_STABILIZATION_TIME);
   
   log('INFO', `⏳ Iniciando período de estabilização (${POST_AUTH_STABILIZATION_TIME/1000}s)...`);
 }
 
-// 🔥 NOVO: Verifica se erro 440 deve ser ignorado (durante estabilização)
+// 🔥 NOVO: Verifica se erro 440 deve ser ignorado
 function shouldIgnore440Error() {
   if (!isStabilizing) return false;
   
@@ -309,15 +309,15 @@ async function connectWhatsApp() {
     return null;
   }
   
-  // 🔥 FIX: Verifica se está REALMENTE autenticado E estável
-  if (globalSock && globalSock.user && !isStabilizing) {
-    log('WARNING', '⚠️ Socket já autenticado e estável');
+  // Durante estabilização, não reconecta
+  if (isStabilizing && globalSock) {
+    log('INFO', '⏳ Aguardando estabilização...');
     return globalSock;
   }
   
-  // 🔥 FIX: Durante estabilização, não reconecta
-  if (isStabilizing && globalSock) {
-    log('INFO', '⏳ Aguardando estabilização...');
+  // Verifica se já está autenticado e estável
+  if (globalSock && globalSock.user && !isStabilizing) {
+    log('WARNING', '⚠️ Socket já autenticado e estável');
     return globalSock;
   }
   
@@ -375,7 +375,6 @@ async function connectWhatsApp() {
       keepAliveIntervalMs: KEEPALIVE_INTERVAL,
       emitOwnEvents: false,
       syncFullHistory: false,
-      // 🔥 NOVO: Configurações adicionais para estabilidade
       retryRequestDelayMs: 2000,
       fireInitQueries: true
     });
@@ -389,7 +388,6 @@ async function connectWhatsApp() {
 
       // Captura QR Code
       if (qr) {
-        // 🔥 FIX: Reset flags ao mostrar novo QR
         isStabilizing = false;
         consecutive440Errors = 0;
         
@@ -410,7 +408,7 @@ async function connectWhatsApp() {
         const isRestartRequired = statusCode === DisconnectReason.restartRequired;
         const isLoginTimeout = statusCode === 440;
 
-        // restartRequired (515) - comportamento normal pós-QR
+        // restartRequired (515)
         if (isRestartRequired) {
           log('INFO', '🔄 WhatsApp solicitou restart - Reconectando...');
           isConnecting = false;
@@ -440,18 +438,39 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 FIX CRÍTICO: Tratamento especial do erro 440
+        // 🔥 FIX: Erro 405 = credenciais inválidas
+        if (statusCode === 405) {
+          log('WARNING', '⚠️ Erro 405 - Credenciais inválidas detectadas');
+          log('INFO', '🧹 Limpando sessão para gerar novo QR Code...');
+          
+          try {
+            await clearAll();
+            consecutive440Errors = 0;
+            reconnectAttempts = 0;
+            log('SUCCESS', '✅ Sessão limpa!');
+          } catch (e) {
+            log('ERROR', `❌ Erro ao limpar: ${e.message}`);
+          }
+          
+          destroySocket();
+          isConnecting = false;
+          
+          setTimeout(() => {
+            connectWhatsApp();
+          }, 3000);
+          return;
+        }
+
+        // Erro 440
         if (isLoginTimeout) {
-          // 🔥 NOVO: Ignora 440 durante período de estabilização
           if (shouldIgnore440Error()) {
             isConnecting = false;
-            return; // NÃO reconecta, apenas ignora
+            return;
           }
           
           consecutive440Errors++;
           log('INFO', `📲 Erro 440 (${consecutive440Errors}/${MAX_440_BEFORE_CLEAR})`);
           
-          // 🔥 APENAS limpa se exceder limite E não estiver estabilizando
           if (consecutive440Errors >= MAX_440_BEFORE_CLEAR && !isStabilizing) {
             log('ERROR', '❌ Múltiplos erros 440 - Limpando sessão...');
             try {
@@ -472,7 +491,6 @@ async function connectWhatsApp() {
             return;
           }
           
-          // 🔥 FIX: Para erros 440 iniciais, aguarda mais tempo
           isConnecting = false;
           const delay = consecutive440Errors <= 2 ? 5000 : getReconnectDelay(reconnectAttempts - 1);
           log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s...`);
