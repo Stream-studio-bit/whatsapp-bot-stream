@@ -49,16 +49,14 @@ export function isBlockExpired(blockedAt) {
   
   return diffMinutes > 60;
 }
-
 /**
  * 🔥 SALVA USUÁRIO
- * ✨ NOVO: Inclui campos de prospecção
+ * ✨ Inclui campos de prospecção
  */
 export async function saveUser(jid, data = {}) {
   const phone = extractPhoneNumber(jid);
   const existing = userCache.get(phone);
   
-  // 🔥 Sincroniza blockedAt do manualAttendanceCache
   const manualAttendance = manualAttendanceCache.get(phone);
   const blockedAt = manualAttendance?.blockedAt 
     ? normalizeDate(manualAttendance.blockedAt)
@@ -73,7 +71,7 @@ export async function saveUser(jid, data = {}) {
     messageCount: (existing?.messageCount || 0) + 1,
     blockedAt: blockedAt,
     
-    // ✨ NOVOS CAMPOS DE PROSPECÇÃO
+    // ✨ CAMPOS DE PROSPECÇÃO
     ownerMessageCount: data.ownerMessageCount !== undefined 
       ? data.ownerMessageCount 
       : existing?.ownerMessageCount || 0,
@@ -83,7 +81,11 @@ export async function saveUser(jid, data = {}) {
     interlocutorType: data.interlocutorType || existing?.interlocutorType || null,
     businessSegment: data.businessSegment || existing?.businessSegment || null,
     lastResponseTime: data.lastResponseTime || existing?.lastResponseTime || null,
-    prospectionStage: data.prospectionStage || existing?.prospectionStage || null
+    prospectionStage: data.prospectionStage || existing?.prospectionStage || null,
+    
+    // ✨ CAMPO DE EMAIL
+    email: data.email || existing?.email || null,
+    emailCapturedAt: data.emailCapturedAt || existing?.emailCapturedAt || null
   };
   
   userCache.set(phone, userData);
@@ -138,7 +140,6 @@ export async function getUser(jid) {
   
   if (!user) return null;
   
-  // 🔥 Sincroniza blockedAt do manualAttendanceCache
   const manualAttendance = manualAttendanceCache.get(phone);
   const blockedAt = manualAttendance?.blockedAt 
     ? normalizeDate(manualAttendance.blockedAt)
@@ -146,7 +147,6 @@ export async function getUser(jid) {
   
   user.blockedAt = blockedAt;
   
-  // 🔥 Verifica expiração automática
   if (blockedAt && isBlockExpired(blockedAt)) {
     log('INFO', `⏰ Bloqueio expirado automaticamente para ${phone}`);
     await unblockBotForUser(jid);
@@ -199,7 +199,6 @@ export async function isLeadUser(jid) {
   const user = await getUser(jid);
   return user?.isNewLead || false;
 }
-
 /**
  * ============================================
  * 🔥 CONTROLE DE ATENDIMENTO MANUAL
@@ -210,13 +209,12 @@ export async function isLeadUser(jid) {
 /**
  * 🔥 BLOQUEIA BOT (Diretriz 3)
  * ⚠️ CRÍTICO: NUNCA toca no socket
- * ✨ NOVO: Valida ownerMessageCount >= 2 antes de bloquear
+ * ✨ Valida ownerMessageCount >= 2 antes de bloquear
  */
 export async function blockBotForUser(jid, force = false) {
   const phone = extractPhoneNumber(jid);
   const user = await getUser(jid);
   
-  // ✨ VALIDAÇÃO: Só bloqueia se owner enviou >= 2 mensagens OU força bloqueio
   if (!force && user && user.ownerMessageCount < 2) {
     log('INFO', `⏸️ Bloqueio ignorado: owner enviou apenas ${user.ownerMessageCount} mensagem(ns) para ${phone}`);
     return false;
@@ -224,13 +222,11 @@ export async function blockBotForUser(jid, force = false) {
   
   const blockedAt = new Date();
   
-  // 🔥 manualAttendanceCache é a FONTE ÚNICA
   manualAttendanceCache.set(phone, {
     blockedAt: blockedAt,
     blockedBy: process.env.OWNER_NAME || 'Roberto'
   });
   
-  // Sincroniza userCache
   if (user) {
     user.blockedAt = blockedAt;
     userCache.set(phone, user);
@@ -243,19 +239,17 @@ export async function blockBotForUser(jid, force = false) {
 /**
  * 🔥 LIBERA BOT (Diretriz 3)
  * ⚠️ CRÍTICO: NUNCA toca no socket
- * ✨ NOVO: Reseta contador de mensagens do owner
+ * ✨ Reseta contador de mensagens do owner
  */
 export async function unblockBotForUser(jid) {
   const phone = extractPhoneNumber(jid);
   
-  // 🔥 Remove do manualAttendanceCache
   manualAttendanceCache.del(phone);
   
-  // Sincroniza userCache e reseta contador
   const user = userCache.get(phone);
   if (user) {
     user.blockedAt = null;
-    user.ownerMessageCount = 0; // ✨ Reseta contador
+    user.ownerMessageCount = 0;
     userCache.set(phone, user);
   }
   
@@ -269,14 +263,12 @@ export async function unblockBotForUser(jid) {
 export async function isBotBlockedForUser(jid) {
   const phone = extractPhoneNumber(jid);
   
-  // 🔥 Verifica no manualAttendanceCache (fonte única)
   const manualAttendance = manualAttendanceCache.get(phone);
   
   if (!manualAttendance) {
     return false;
   }
   
-  // 🔥 Verifica expiração
   if (isBlockExpired(manualAttendance.blockedAt)) {
     log('INFO', `⏰ Bloqueio expirado e removido para: ${phone}`);
     await unblockBotForUser(jid);
@@ -298,22 +290,52 @@ export function getBlockedUsers() {
 }
 
 /**
+ * 🔥 CLEANUP PERIÓDICO (Diretriz 5)
+ */
+export async function cleanExpiredBlocks() {
+  const keys = manualAttendanceCache.keys();
+  let cleaned = 0;
+  
+  for (const phone of keys) {
+    const attendance = manualAttendanceCache.get(phone);
+    
+    if (attendance && isBlockExpired(attendance.blockedAt)) {
+      manualAttendanceCache.del(phone);
+      
+      const user = userCache.get(phone);
+      if (user) {
+        user.blockedAt = null;
+        userCache.set(phone, user);
+      }
+      
+      cleaned++;
+      log('INFO', `🧹 Bloqueio expirado removido: ${phone}`);
+    }
+  }
+  
+  if (cleaned > 0) {
+    log('SUCCESS', `✅ ${cleaned} bloqueio(s) expirado(s) removido(s)`);
+  }
+  
+  return cleaned;
+}
+/**
  * ============================================
- * ✨ NOVAS FUNÇÕES DE PROSPECÇÃO
+ * ✨ FUNÇÕES DE PROSPECÇÃO
  * ============================================
  */
 
 /**
  * ✨ INCREMENTA CONTADOR DE MENSAGENS DO OWNER
- * Usado para decidir quando bloquear IA (após 2ª mensagem)
  */
 export async function incrementOwnerMessageCount(jid) {
   const phone = extractPhoneNumber(jid);
   const user = await getUser(jid);
   
   if (!user) {
-    log('WARNING', `⚠️ Tentativa de incrementar contador para usuário inexistente: ${phone}`);
-    return 0;
+    // Cria usuário se não existir
+    await saveUser(jid, { ownerMessageCount: 1 });
+    return 1;
   }
   
   const newCount = (user.ownerMessageCount || 0) + 1;
@@ -330,10 +352,24 @@ export async function incrementOwnerMessageCount(jid) {
 }
 
 /**
- * ✨ REGISTRA TEMPO DE RESPOSTA
- * Usado para detectar chatbot (respostas < 5seg) vs humano (> 30seg)
+ * ✨ OBTÉM CONTADOR DE MENSAGENS DO OWNER
+ * 🔥 FUNÇÃO QUE ESTAVA FALTANDO!
  */
-export async function recordResponseTime(jid, timestamp = null) {
+export async function getOwnerMessageCount(jid) {
+  const phone = extractPhoneNumber(jid);
+  const user = await getUser(jid);
+  
+  if (!user) {
+    return 0;
+  }
+  
+  return user.ownerMessageCount || 0;
+}
+
+/**
+ * ✨ REGISTRA TEMPO DE RESPOSTA
+ */
+export async function recordResponseTime(jid, responseTimeSeconds) {
   const phone = extractPhoneNumber(jid);
   const user = await getUser(jid);
   
@@ -342,44 +378,50 @@ export async function recordResponseTime(jid, timestamp = null) {
     return null;
   }
   
-  const currentTime = timestamp || new Date();
-  const previousTime = user.lastResponseTime;
-  
-  // Calcula delta se houver tempo anterior
-  let responseTimeSeconds = null;
-  if (previousTime) {
-    const delta = currentTime - new Date(previousTime);
-    responseTimeSeconds = Math.floor(delta / 1000);
-    
-    if (process.env.DEBUG_MODE === 'true') {
-      log('INFO', `⏱️ Tempo de resposta para ${phone}: ${responseTimeSeconds}s`);
-    }
-  }
-  
-  // Atualiza timestamp
   await updateUser(jid, {
-    lastResponseTime: currentTime
+    lastResponseTime: new Date(),
+    lastResponseTimeSeconds: responseTimeSeconds
   });
+  
+  if (process.env.DEBUG_MODE === 'true') {
+    log('INFO', `⏱️ Tempo de resposta registrado para ${phone}: ${responseTimeSeconds}s`);
+  }
   
   return responseTimeSeconds;
 }
 
 /**
- * ✨ MARCA INÍCIO DE PROSPECÇÃO PELO OWNER
+ * ✨ DEFINE PROSPECÇÃO PELO OWNER
+ * 🔥 FUNÇÃO QUE ESTAVA FALTANDO! (era markOwnerProspecting)
  */
-export async function markOwnerProspecting(jid, isProspecting = true) {
+export async function setOwnerProspecting(jid, isProspecting = true) {
   const phone = extractPhoneNumber(jid);
   
-  await updateUser(jid, {
-    isOwnerProspecting: isProspecting,
-    ownerMessageCount: 0 // Reseta contador ao iniciar prospecção
-  });
+  // Garante que usuário existe
+  let user = await getUser(jid);
+  if (!user) {
+    await saveUser(jid, {
+      isOwnerProspecting: isProspecting,
+      ownerMessageCount: 0
+    });
+  } else {
+    await updateUser(jid, {
+      isOwnerProspecting: isProspecting
+    });
+  }
   
   if (isProspecting) {
     log('SUCCESS', `🎯 Prospecção iniciada pelo owner: ${phone}`);
   } else {
-    log('INFO', `📴 Prospecção desativada para: ${phone}`);
+    log('INFO', `🔴 Prospecção desativada para: ${phone}`);
   }
+}
+
+/**
+ * ✨ ALIAS para manter compatibilidade
+ */
+export async function markOwnerProspecting(jid, isProspecting = true) {
+  return await setOwnerProspecting(jid, isProspecting);
 }
 
 /**
@@ -412,6 +454,38 @@ export async function updateProspectionInfo(jid, info = {}) {
   }
   
   return await updateUser(jid, updates);
+}
+
+/**
+ * ✨ OBTÉM TODAS AS CONVERSAS DE PROSPECÇÃO
+ * 🔥 FUNÇÃO QUE ESTAVA FALTANDO!
+ */
+export async function getAllProspectingConversations() {
+  const allUsers = userCache.keys();
+  const prospectingConversations = [];
+  
+  allUsers.forEach(phone => {
+    const user = userCache.get(phone);
+    
+    if (user && (user.ownerMessageCount > 0 || user.isOwnerProspecting)) {
+      const manualAttendance = manualAttendanceCache.get(phone);
+      const isBlocked = manualAttendance && !isBlockExpired(manualAttendance.blockedAt);
+      
+      prospectingConversations.push({
+        phone: user.phone,
+        name: user.name,
+        ownerMessageCount: user.ownerMessageCount || 0,
+        isOwnerProspecting: user.isOwnerProspecting || false,
+        isBotBlocked: isBlocked,
+        lastContact: user.lastInteraction,
+        interlocutorType: user.interlocutorType,
+        businessSegment: user.businessSegment,
+        prospectionStage: user.prospectionStage
+      });
+    }
+  });
+  
+  return prospectingConversations;
 }
 
 /**
@@ -499,39 +573,6 @@ export function listOwnerConversations() {
   
   return ownerConversations;
 }
-
-/**
- * 🔥 CLEANUP PERIÓDICO (Diretriz 5)
- * Chamado a cada 5 minutos pelo index.js
- */
-export async function cleanExpiredBlocks() {
-  const keys = manualAttendanceCache.keys();
-  let cleaned = 0;
-  
-  for (const phone of keys) {
-    const attendance = manualAttendanceCache.get(phone);
-    
-    if (attendance && isBlockExpired(attendance.blockedAt)) {
-      manualAttendanceCache.del(phone);
-      
-      const user = userCache.get(phone);
-      if (user) {
-        user.blockedAt = null;
-        userCache.set(phone, user);
-      }
-      
-      cleaned++;
-      log('INFO', `🧹 Bloqueio expirado removido: ${phone}`);
-    }
-  }
-  
-  if (cleaned > 0) {
-    log('SUCCESS', `✅ ${cleaned} bloqueio(s) expirado(s) removido(s)`);
-  }
-  
-  return cleaned;
-}
-
 /**
  * ============================================
  * ESTATÍSTICAS
@@ -555,7 +596,6 @@ export function getStats() {
     }
   });
   
-  // 🔥 Conta apenas bloqueios NÃO expirados
   const blockedKeys = manualAttendanceCache.keys();
   blockedKeys.forEach(phone => {
     const attendance = manualAttendanceCache.get(phone);
@@ -679,7 +719,13 @@ export async function saveConversationHistory(jid, messages) {
   }
 }
 
+/**
+ * ============================================
+ * 🔥 EXPORT DEFAULT - TODAS AS FUNÇÕES
+ * ============================================
+ */
 export default {
+  // Usuários
   saveUser,
   updateUser,
   getUser,
@@ -687,24 +733,32 @@ export default {
   hasOngoingConversation,
   markAsNewLead,
   isLeadUser,
+  
+  // Bloqueio
   blockBotForUser,
   unblockBotForUser,
   isBotBlockedForUser,
   getBlockedUsers,
   isBlockExpired,
   cleanExpiredBlocks,
+  
+  // Prospecção - FUNÇÕES CORRIGIDAS
+  incrementOwnerMessageCount,
+  getOwnerMessageCount,          // 🔥 NOVA
+  recordResponseTime,
+  setOwnerProspecting,           // 🔥 NOVA
+  markOwnerProspecting,          // Alias
+  updateProspectionInfo,
+  getProspectionStats,
+  listOwnerConversations,
+  getAllProspectingConversations, // 🔥 NOVA
+  
+  // Estatísticas e Utilidades
   getStats,
   getAllUsers,
   clearUser,
   clearAllCache,
   exportData,
   printStats,
-  saveConversationHistory,
-  // ✨ Novas funções de prospecção
-  incrementOwnerMessageCount,
-  recordResponseTime,
-  markOwnerProspecting,
-  updateProspectionInfo,
-  getProspectionStats,
-  listOwnerConversations
+  saveConversationHistory
 };
