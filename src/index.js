@@ -38,8 +38,9 @@ const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000;
 const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
 const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
-// 🔥 FIX: Limite de erros 440 antes de limpar sessão
-const MAX_440_BEFORE_CLEAR = 2;
+// 🔥 FIX: Configurações de estabilização pós-autenticação
+const POST_AUTH_STABILIZATION_TIME = 10000; // 10 segundos para estabilizar após auth
+const MAX_440_BEFORE_CLEAR = 3; // Aumentado para 3
 
 let mongoClient = null;
 let globalSock = null;
@@ -50,7 +51,12 @@ let isInitialized = false;
 let httpServer = null;
 let lastReconnectTime = 0;
 let totalReconnectAttempts = 0;
-let authenticationTimeout = null; // 🔥 NOVO: Timeout de autenticação
+let authenticationTimeout = null;
+
+// 🔥 NOVO: Flag para período de estabilização pós-auth
+let isStabilizing = false;
+let stabilizationTimeout = null;
+let lastSuccessfulAuth = 0;
 
 const msgRetryCounterCache = new NodeCache();
 const processedMessages = new Set();
@@ -98,6 +104,7 @@ function setupHealthServer() {
       whatsapp: { 
         connected: !!(globalSock && globalSock.user),
         authenticated: !!(globalSock && globalSock.user),
+        stabilizing: isStabilizing,
         consecutive440: consecutive440Errors
       },
       uptime: Math.floor(process.uptime())
@@ -188,7 +195,6 @@ async function useMongoDBAuthState(collection) {
     clearAll: async () => await collection.deleteMany({})
   };
 }
-
 async function getMessageFromDB(key) {
   try {
     if (!mongoClient) return proto.Message.fromObject({});
@@ -254,11 +260,47 @@ function destroySocket() {
     globalSock = null;
   }
   
-  // 🔥 NOVO: Limpa timeout de autenticação
+  // Limpa timeouts
   if (authenticationTimeout) {
     clearTimeout(authenticationTimeout);
     authenticationTimeout = null;
   }
+  
+  if (stabilizationTimeout) {
+    clearTimeout(stabilizationTimeout);
+    stabilizationTimeout = null;
+  }
+}
+
+// 🔥 NOVO: Inicia período de estabilização pós-autenticação
+function startStabilizationPeriod() {
+  isStabilizing = true;
+  lastSuccessfulAuth = Date.now();
+  
+  if (stabilizationTimeout) {
+    clearTimeout(stabilizationTimeout);
+  }
+  
+  stabilizationTimeout = setTimeout(() => {
+    isStabilizing = false;
+    consecutive440Errors = 0; // Reset após estabilização
+    log('SUCCESS', '✅ Período de estabilização concluído - Bot totalmente operacional');
+  }, POST_AUTH_STABILIZATION_TIME);
+  
+  log('INFO', `⏳ Iniciando período de estabilização (${POST_AUTH_STABILIZATION_TIME/1000}s)...`);
+}
+
+// 🔥 NOVO: Verifica se erro 440 deve ser ignorado (durante estabilização)
+function shouldIgnore440Error() {
+  if (!isStabilizing) return false;
+  
+  const timeSinceAuth = Date.now() - lastSuccessfulAuth;
+  if (timeSinceAuth < POST_AUTH_STABILIZATION_TIME) {
+    log('INFO', '🔄 Erro 440 ignorado (período de estabilização pós-auth)');
+    return true;
+  }
+  
+  return false;
 }
 
 async function connectWhatsApp() {
@@ -267,9 +309,15 @@ async function connectWhatsApp() {
     return null;
   }
   
-  // 🔥 FIX: Verifica se está REALMENTE autenticado (com user)
-  if (globalSock && globalSock.user) {
-    log('WARNING', '⚠️ Socket já autenticado');
+  // 🔥 FIX: Verifica se está REALMENTE autenticado E estável
+  if (globalSock && globalSock.user && !isStabilizing) {
+    log('WARNING', '⚠️ Socket já autenticado e estável');
+    return globalSock;
+  }
+  
+  // 🔥 FIX: Durante estabilização, não reconecta
+  if (isStabilizing && globalSock) {
+    log('INFO', '⏳ Aguardando estabilização...');
     return globalSock;
   }
   
@@ -326,7 +374,10 @@ async function connectWhatsApp() {
       defaultQueryTimeoutMs: QUERY_TIMEOUT,
       keepAliveIntervalMs: KEEPALIVE_INTERVAL,
       emitOwnEvents: false,
-      syncFullHistory: false
+      syncFullHistory: false,
+      // 🔥 NOVO: Configurações adicionais para estabilidade
+      retryRequestDelayMs: 2000,
+      fireInitQueries: true
     });
 
     globalSock = sock;
@@ -336,8 +387,12 @@ async function connectWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // 🔥 Captura QR Code manualmente
+      // Captura QR Code
       if (qr) {
+        // 🔥 FIX: Reset flags ao mostrar novo QR
+        isStabilizing = false;
+        consecutive440Errors = 0;
+        
         console.log('\n📱 ┌────────────────────────────────────────────┐');
         console.log('📱 ESCANEIE O QR CODE ABAIXO EM 60 SEGUNDOS');
         console.log('📱 └────────────────────────────────────────────┘\n');
@@ -355,13 +410,11 @@ async function connectWhatsApp() {
         const isRestartRequired = statusCode === DisconnectReason.restartRequired;
         const isLoginTimeout = statusCode === 440;
 
-        // 🔥 CRÍTICO: restartRequired (515) após QR scan - COMPORTAMENTO NORMAL
+        // restartRequired (515) - comportamento normal pós-QR
         if (isRestartRequired) {
-          log('INFO', '🔄 WhatsApp solicitou restart (pós-QR scan) - Reconectando...');
-          destroySocket();
+          log('INFO', '🔄 WhatsApp solicitou restart - Reconectando...');
           isConnecting = false;
           
-          // Reconexão imediata (comportamento normal)
           setTimeout(() => {
             connectWhatsApp();
           }, 1000);
@@ -387,15 +440,20 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 FIX CRÍTICO: Erro 440 - COMPORTAMENTO NORMAL após QR scan
+        // 🔥 FIX CRÍTICO: Tratamento especial do erro 440
         if (isLoginTimeout) {
-          consecutive440Errors++;
-          log('INFO', `📲 Erro 440 (${consecutive440Errors}/${MAX_440_BEFORE_CLEAR}) - Desconexão pós-QR (normal)`);
+          // 🔥 NOVO: Ignora 440 durante período de estabilização
+          if (shouldIgnore440Error()) {
+            isConnecting = false;
+            return; // NÃO reconecta, apenas ignora
+          }
           
-          // 🔥 APENAS limpa se for erro recorrente (credenciais corrompidas)
-          if (consecutive440Errors >= MAX_440_BEFORE_CLEAR) {
-            log('ERROR', '❌ Múltiplos erros 440! Credenciais podem estar corrompidas.');
-            log('WARNING', '🧹 Limpando sessão automaticamente...');
+          consecutive440Errors++;
+          log('INFO', `📲 Erro 440 (${consecutive440Errors}/${MAX_440_BEFORE_CLEAR})`);
+          
+          // 🔥 APENAS limpa se exceder limite E não estiver estabilizando
+          if (consecutive440Errors >= MAX_440_BEFORE_CLEAR && !isStabilizing) {
+            log('ERROR', '❌ Múltiplos erros 440 - Limpando sessão...');
             try {
               await clearAll();
               consecutive440Errors = 0;
@@ -404,15 +462,20 @@ async function connectWhatsApp() {
             } catch (e) {
               log('ERROR', `❌ Erro ao limpar: ${e.message}`);
             }
+            
+            destroySocket();
+            isConnecting = false;
+            
+            setTimeout(() => {
+              connectWhatsApp();
+            }, 3000);
+            return;
           }
           
-          // 🔥 CRÍTICO: Destrói socket COMPLETAMENTE antes de reconectar
-          destroySocket();
+          // 🔥 FIX: Para erros 440 iniciais, aguarda mais tempo
           isConnecting = false;
-          
-          // 🔥 Reconexão IMEDIATA para primeiro erro 440 (comportamento normal)
-          const delay = consecutive440Errors === 1 ? 1000 : getReconnectDelay(reconnectAttempts - 1);
-          log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s para reconectar...`);
+          const delay = consecutive440Errors <= 2 ? 5000 : getReconnectDelay(reconnectAttempts - 1);
+          log('INFO', `⏳ Aguardando ${Math.round(delay / 1000)}s...`);
           
           setTimeout(() => {
             connectWhatsApp();
@@ -422,7 +485,6 @@ async function connectWhatsApp() {
 
         // Outros erros
         log('WARNING', `⚠️ Conexão fechada (${statusCode || 'desconhecido'})`);
-        destroySocket();
         isConnecting = false;
         
         const delay = getReconnectDelay(reconnectAttempts - 1);
@@ -432,21 +494,21 @@ async function connectWhatsApp() {
         
         return;
       }
-
       if (connection === 'open') {
         isConnecting = false;
         
-        // 🔥 FIX CRÍTICO: SÓ reseta contadores se AUTENTICADO (tem user)
+        // 🔥 FIX CRÍTICO: Verifica se realmente autenticou
         if (sock.user) {
-          // 🔥 Limpa timeout de autenticação (se existir)
+          // Limpa timeout de autenticação
           if (authenticationTimeout) {
             clearTimeout(authenticationTimeout);
             authenticationTimeout = null;
           }
           
+          // 🔥 NOVO: Inicia período de estabilização
+          startStabilizationPeriod();
+          
           reconnectAttempts = 0;
-          // 🔥 CRÍTICO: NÃO reseta consecutive440Errors aqui!
-          // Só reseta quando houver estabilidade (após RECONNECT_RESET_TIME)
           
           log('SUCCESS', '✅ Conectado E AUTENTICADO ao WhatsApp!');
           console.log('\n🎉 ┌────────────────────────────────────────────┐');
@@ -465,17 +527,17 @@ async function connectWhatsApp() {
           console.log('   stats | blocked | users | clearsession\n');
           
         } else {
-          // 🔥 NOVO: Aguarda autenticação completar (timeout de 45s - aumentado)
-          log('INFO', '⏳ Aguardando autenticação completar (QR Code escaneado)...');
+          // Aguarda autenticação completar
+          log('INFO', '⏳ Aguardando autenticação completar...');
           
           authenticationTimeout = setTimeout(() => {
             if (!sock.user) {
-              log('WARNING', '⚠️ Timeout de autenticação após 45s - reconectando...');
+              log('WARNING', '⚠️ Timeout de autenticação - reconectando...');
               destroySocket();
               isConnecting = false;
               connectWhatsApp();
             }
-          }, 45000); // 45 segundos (aumentado de 30)
+          }, 45000);
         }
         
         return;
@@ -485,11 +547,16 @@ async function connectWhatsApp() {
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       
-      // 🔥 FIX CRÍTICO: Ignora mensagens históricas (append)
-      if (type !== 'notify') {
+      // 🔥 FIX: Ignora mensagens durante estabilização inicial
+      if (isStabilizing) {
         if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', '⏭️ Ignorando mensagens históricas (append)');
+          log('INFO', '⏸️ Mensagem ignorada (estabilização em andamento)');
         }
+        return;
+      }
+      
+      // Ignora mensagens históricas
+      if (type !== 'notify') {
         return;
       }
 
@@ -553,12 +620,14 @@ function setupConsoleCommands() {
         log('INFO', '🔄 Reconectando...');
         reconnectAttempts = 0;
         consecutive440Errors = 0;
+        isStabilizing = false;
         destroySocket();
         connectWhatsApp();
         break;
       case 'reset':
         reconnectAttempts = 0;
         consecutive440Errors = 0;
+        isStabilizing = false;
         totalReconnectAttempts = 0;
         log('SUCCESS', '✅ Contadores resetados');
         break;
@@ -569,6 +638,7 @@ function setupConsoleCommands() {
             const db = mongoClient.db('baileys_auth');
             await db.collection(SESSION_ID).deleteMany({});
             consecutive440Errors = 0;
+            isStabilizing = false;
             log('SUCCESS', '✅ Sessão limpa!');
             log('INFO', '💡 Reinicie o bot (Ctrl+C)');
           } catch (err) {
@@ -578,6 +648,13 @@ function setupConsoleCommands() {
           log('ERROR', '❌ MongoDB não conectado');
         }
         break;
+      case 'status':
+        console.log('\n📊 STATUS ATUAL:');
+        console.log(`   Conectado: ${!!(globalSock && globalSock.user)}`);
+        console.log(`   Estabilizando: ${isStabilizing}`);
+        console.log(`   Erros 440: ${consecutive440Errors}`);
+        console.log(`   Reconexões: ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}\n`);
+        break;
       case 'help':
         console.log('\n📋 COMANDOS:');
         console.log('   stats        - Estatísticas');
@@ -586,6 +663,7 @@ function setupConsoleCommands() {
         console.log('   reconnect    - Reconectar');
         console.log('   reset        - Reset contadores');
         console.log('   clearsession - Limpar sessão');
+        console.log('   status       - Status atual');
         console.log('   help         - Ajuda');
         console.log('   clear        - Limpar tela\n');
         break;
@@ -621,6 +699,7 @@ const shutdown = async () => {
   console.log('\n\n👋 Encerrando...');
   if (cleanupInterval) clearInterval(cleanupInterval);
   if (authenticationTimeout) clearTimeout(authenticationTimeout);
+  if (stabilizationTimeout) clearTimeout(stabilizationTimeout);
   if (httpServer) httpServer.close();
   if (mongoClient) await mongoClient.close();
   process.exit(0);
