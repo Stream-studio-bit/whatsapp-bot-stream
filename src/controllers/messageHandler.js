@@ -26,7 +26,6 @@ import {
   incrementOwnerMessageCount,
   getOwnerMessageCount,
   recordResponseTime,
-  getLastResponseTime,
   setOwnerProspecting,
   updateUser // 🆕 ADICIONADO para atualização de email
 } from '../services/database.js';
