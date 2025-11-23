@@ -351,16 +351,9 @@ async function connectWhatsApp() {
       log('SUCCESS', '✅ MongoDB conectado');
     }
 
-    // 🔥 FIX: Busca versão com fallback robusto
-    let version;
-    try {
-      const versionInfo = await fetchLatestBaileysVersion();
-      version = versionInfo.version;
-      log('INFO', `📦 Versão Baileys obtida: ${version.join('.')}`);
-    } catch (err) {
-      version = [2, 3000, 1015901307];
-      log('WARNING', `⚠️ Fallback versão: ${version.join('.')}`);
-    }
+    // 🔥 Versão fixa - fetchLatestBaileysVersion() trava no Render
+    const version = [2, 3000, 1017531287];
+    log('INFO', `📦 Usando versão Baileys: ${version.join('.')}`);
 
     const db = mongoClient.db('baileys_auth');
     const collection = db.collection(SESSION_ID);
