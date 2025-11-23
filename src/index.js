@@ -396,6 +396,7 @@ async function connectWhatsApp() {
 
       // Captura QR Code
       if (qr) {
+        log('INFO', '📱 QR Code recebido!');
         isStabilizing = false;
         consecutive440Errors = 0;
         
