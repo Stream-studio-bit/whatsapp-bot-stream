@@ -39,8 +39,11 @@ const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
 const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
 // 🔥 FIX: Configurações de estabilização pós-autenticação
-const POST_AUTH_STABILIZATION_TIME = 10000; // 10 segundos para estabilizar após auth
-const MAX_440_BEFORE_CLEAR = 3; // Aumentado para 3
+const POST_AUTH_STABILIZATION_TIME = 10000;
+const MAX_440_BEFORE_CLEAR = 3;
+
+// 🔥 NOVO: Timeout para fetchLatestBaileysVersion
+const FETCH_VERSION_TIMEOUT = 10000; // 10 segundos
 
 let mongoClient = null;
 let globalSock = null;
@@ -137,7 +140,6 @@ function initializeOnce() {
   setupConsoleCommands();
   isInitialized = true;
 }
-
 async function useMongoDBAuthState(collection) {
   const readCreds = async () => {
     const data = await collection.findOne({ _id: 'creds' });
@@ -195,6 +197,7 @@ async function useMongoDBAuthState(collection) {
     clearAll: async () => await collection.deleteMany({})
   };
 }
+
 async function getMessageFromDB(key) {
   try {
     if (!mongoClient) return proto.Message.fromObject({});
@@ -260,7 +263,6 @@ function destroySocket() {
     globalSock = null;
   }
   
-  // Limpa timeouts
   if (authenticationTimeout) {
     clearTimeout(authenticationTimeout);
     authenticationTimeout = null;
@@ -303,6 +305,30 @@ function shouldIgnore440Error() {
   return false;
 }
 
+// 🔥 NOVO: Busca versão do Baileys com timeout
+async function fetchBaileysVersionWithTimeout() {
+  try {
+    log('INFO', '📡 Buscando versão mais recente do Baileys...');
+    
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Timeout ao buscar versão')), FETCH_VERSION_TIMEOUT)
+    );
+    
+    const versionPromise = fetchLatestBaileysVersion();
+    
+    const { version } = await Promise.race([versionPromise, timeoutPromise]);
+    
+    log('SUCCESS', `✅ Versão obtida: ${version.join('.')}`);
+    return version;
+    
+  } catch (error) {
+    log('WARNING', `⚠️ Erro ao buscar versão: ${error.message}`);
+    log('INFO', '📦 Usando versão fallback mais recente conhecida');
+    
+    // 🔥 VERSÃO FALLBACK ATUALIZADA (Janeiro 2025)
+    return [2, 3000, 1019826820];
+  }
+}
 async function connectWhatsApp() {
   if (isConnecting) {
     log('WARNING', '⚠️ Conexão em andamento...');
@@ -351,8 +377,8 @@ async function connectWhatsApp() {
       log('SUCCESS', '✅ MongoDB conectado');
     }
 
-    // 🔥 Versão fixa - fetchLatestBaileysVersion() trava no Render
-    const version = [2, 3000, 1017531287];
+    // 🔥 CORREÇÃO CRÍTICA: Busca versão atualizada com timeout
+    const version = await fetchBaileysVersionWithTimeout();
     log('INFO', `📦 Usando versão Baileys: ${version.join('.')}`);
 
     const db = mongoClient.db('baileys_auth');
@@ -377,7 +403,8 @@ async function connectWhatsApp() {
       emitOwnEvents: false,
       syncFullHistory: false,
       retryRequestDelayMs: 2000,
-      fireInitQueries: true
+      fireInitQueries: true,
+      printQRInTerminal: false // 🔥 NOVO: Desabilitado para usar lógica customizada
     });
 
     globalSock = sock;
@@ -409,6 +436,7 @@ async function connectWhatsApp() {
         const shouldLogout = statusCode === DisconnectReason.loggedOut;
         const isRestartRequired = statusCode === DisconnectReason.restartRequired;
         const isLoginTimeout = statusCode === 440;
+        const isCredentialsInvalid = statusCode === 405;
 
         // restartRequired (515)
         if (isRestartRequired) {
@@ -440,26 +468,28 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 FIX: Erro 405 = credenciais inválidas
-        if (statusCode === 405) {
-          log('WARNING', '⚠️ Erro 405 - Credenciais inválidas detectadas');
+        // 🔥 CORREÇÃO CRÍTICA: Erro 405 - PARA A EXECUÇÃO
+        if (isCredentialsInvalid) {
+          log('ERROR', '❌ ERRO 405: Credenciais inválidas ou versão incompatível');
           log('INFO', '🧹 Limpando sessão para gerar novo QR Code...');
           
           try {
             await clearAll();
             consecutive440Errors = 0;
             reconnectAttempts = 0;
-            log('SUCCESS', '✅ Sessão limpa!');
+            log('SUCCESS', '✅ Sessão limpa com sucesso!');
           } catch (e) {
-            log('ERROR', `❌ Erro ao limpar: ${e.message}`);
+            log('ERROR', `❌ Erro ao limpar sessão: ${e.message}`);
           }
           
           destroySocket();
           isConnecting = false;
           
-          setTimeout(() => {
-            connectWhatsApp();
-          }, 3000);
+          // 🔥 CORREÇÃO: NÃO RECONECTA AUTOMATICAMENTE
+          log('INFO', '⏸️  Bot pausado. Reinicie manualmente para gerar novo QR Code.');
+          log('INFO', '💡 Dica: Certifique-se de que a versão do Baileys está atualizada');
+          
+          // Mantém servidor HTTP ativo mas não tenta reconectar
           return;
         }
 
@@ -660,7 +690,7 @@ function setupConsoleCommands() {
             consecutive440Errors = 0;
             isStabilizing = false;
             log('SUCCESS', '✅ Sessão limpa!');
-            log('INFO', '💡 Reinicie o bot (Ctrl+C)');
+            log('INFO', '💡 Reinicie o bot (Ctrl+C) para gerar novo QR Code');
           } catch (err) {
             log('ERROR', `❌ Erro: ${err.message}`);
           }
