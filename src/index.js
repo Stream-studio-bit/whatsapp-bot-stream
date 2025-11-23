@@ -400,8 +400,8 @@ async function connectWhatsApp() {
       connectTimeoutMs: CONNECT_TIMEOUT,
       defaultQueryTimeoutMs: QUERY_TIMEOUT,
       keepAliveIntervalMs: KEEPALIVE_INTERVAL,
-      emitOwnEvents: false,
-      syncFullHistory: false,
+      emitOwnEvents: true,
+      syncFullHistory: true,
       retryRequestDelayMs: 2000,
       fireInitQueries: true,
       printQRInTerminal: false // 🔥 NOVO: Desabilitado para usar lógica customizada
