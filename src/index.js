@@ -597,14 +597,6 @@ async function connectWhatsApp() {
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       
-      // 🔥 FIX: Ignora mensagens durante estabilização inicial
-      if (isStabilizing) {
-        if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', '⏸️ Mensagem ignorada (estabilização em andamento)');
-        }
-        return;
-      }
-      
       // Ignora mensagens históricas
       if (type !== 'notify') {
         return;
