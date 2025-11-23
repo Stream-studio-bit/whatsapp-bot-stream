@@ -38,12 +38,9 @@ const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000;
 const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
 const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
-// 🔥 FIX: Configurações de estabilização pós-autenticação
 const POST_AUTH_STABILIZATION_TIME = 10000;
 const MAX_440_BEFORE_CLEAR = 3;
-
-// 🔥 NOVO: Timeout para fetchLatestBaileysVersion
-const FETCH_VERSION_TIMEOUT = 10000; // 10 segundos
+const FETCH_VERSION_TIMEOUT = 10000;
 
 let mongoClient = null;
 let globalSock = null;
@@ -55,8 +52,6 @@ let httpServer = null;
 let lastReconnectTime = 0;
 let totalReconnectAttempts = 0;
 let authenticationTimeout = null;
-
-// 🔥 NOVO: Flag para período de estabilização pós-auth
 let isStabilizing = false;
 let stabilizationTimeout = null;
 let lastSuccessfulAuth = 0;
@@ -198,17 +193,18 @@ async function useMongoDBAuthState(collection) {
   };
 }
 
+// 🔥 CORREÇÃO CRÍTICA: getMessage agora retorna undefined quando não há mensagem
 async function getMessageFromDB(key) {
   try {
-    if (!mongoClient) return proto.Message.fromObject({});
+    if (!mongoClient) return undefined;
     
     const db = mongoClient.db('baileys_auth');
     const messagesCollection = db.collection('messages');
     const message = await messagesCollection.findOne({ 'key.id': key.id });
     
-    return message?.message || proto.Message.fromObject({});
+    return message?.message || undefined;
   } catch (error) {
-    return proto.Message.fromObject({});
+    return undefined;
   }
 }
 
@@ -274,7 +270,6 @@ function destroySocket() {
   }
 }
 
-// 🔥 NOVO: Inicia período de estabilização pós-autenticação
 function startStabilizationPeriod() {
   isStabilizing = true;
   lastSuccessfulAuth = Date.now();
@@ -292,7 +287,6 @@ function startStabilizationPeriod() {
   log('INFO', `⏳ Iniciando período de estabilização (${POST_AUTH_STABILIZATION_TIME/1000}s)...`);
 }
 
-// 🔥 NOVO: Verifica se erro 440 deve ser ignorado
 function shouldIgnore440Error() {
   if (!isStabilizing) return false;
   
@@ -305,7 +299,6 @@ function shouldIgnore440Error() {
   return false;
 }
 
-// 🔥 NOVO: Busca versão do Baileys com timeout
 async function fetchBaileysVersionWithTimeout() {
   try {
     log('INFO', '📡 Buscando versão mais recente do Baileys...');
@@ -325,7 +318,6 @@ async function fetchBaileysVersionWithTimeout() {
     log('WARNING', `⚠️ Erro ao buscar versão: ${error.message}`);
     log('INFO', '📦 Usando versão fallback mais recente conhecida');
     
-    // 🔥 VERSÃO FALLBACK ATUALIZADA (Janeiro 2025)
     return [2, 3000, 1019826820];
   }
 }
@@ -335,13 +327,11 @@ async function connectWhatsApp() {
     return null;
   }
   
-  // Durante estabilização, não reconecta
   if (isStabilizing && globalSock) {
     log('INFO', '⏳ Aguardando estabilização...');
     return globalSock;
   }
   
-  // Verifica se já está autenticado e estável
   if (globalSock && globalSock.user && !isStabilizing) {
     log('WARNING', '⚠️ Socket já autenticado e estável');
     return globalSock;
@@ -377,7 +367,6 @@ async function connectWhatsApp() {
       log('SUCCESS', '✅ MongoDB conectado');
     }
 
-    // 🔥 CORREÇÃO CRÍTICA: Busca versão atualizada com timeout
     const version = await fetchBaileysVersionWithTimeout();
     log('INFO', `📦 Usando versão Baileys: ${version.join('.')}`);
 
@@ -404,7 +393,7 @@ async function connectWhatsApp() {
       syncFullHistory: true,
       retryRequestDelayMs: 2000,
       fireInitQueries: true,
-      printQRInTerminal: false // 🔥 NOVO: Desabilitado para usar lógica customizada
+      printQRInTerminal: false
     });
 
     globalSock = sock;
@@ -414,7 +403,6 @@ async function connectWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // Captura QR Code
       if (qr) {
         log('INFO', '📱 QR Code recebido!');
         isStabilizing = false;
@@ -438,7 +426,6 @@ async function connectWhatsApp() {
         const isLoginTimeout = statusCode === 440;
         const isCredentialsInvalid = statusCode === 405;
 
-        // restartRequired (515)
         if (isRestartRequired) {
           log('INFO', '🔄 WhatsApp solicitou restart - Reconectando...');
           isConnecting = false;
@@ -468,7 +455,6 @@ async function connectWhatsApp() {
           return;
         }
 
-        // 🔥 CORREÇÃO CRÍTICA: Erro 405 - PARA A EXECUÇÃO
         if (isCredentialsInvalid) {
           log('ERROR', '❌ ERRO 405: Credenciais inválidas ou versão incompatível');
           log('INFO', '🧹 Limpando sessão para gerar novo QR Code...');
@@ -485,15 +471,12 @@ async function connectWhatsApp() {
           destroySocket();
           isConnecting = false;
           
-          // 🔥 CORREÇÃO: NÃO RECONECTA AUTOMATICAMENTE
-          log('INFO', '⏸️  Bot pausado. Reinicie manualmente para gerar novo QR Code.');
+          log('INFO', '⏸️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
           log('INFO', '💡 Dica: Certifique-se de que a versão do Baileys está atualizada');
           
-          // Mantém servidor HTTP ativo mas não tenta reconectar
           return;
         }
 
-        // Erro 440
         if (isLoginTimeout) {
           if (shouldIgnore440Error()) {
             isConnecting = false;
@@ -533,7 +516,6 @@ async function connectWhatsApp() {
           return;
         }
 
-        // Outros erros
         log('WARNING', `⚠️ Conexão fechada (${statusCode || 'desconhecido'})`);
         isConnecting = false;
         
@@ -547,15 +529,12 @@ async function connectWhatsApp() {
       if (connection === 'open') {
         isConnecting = false;
         
-        // 🔥 FIX CRÍTICO: Verifica se realmente autenticou
         if (sock.user) {
-          // Limpa timeout de autenticação
           if (authenticationTimeout) {
             clearTimeout(authenticationTimeout);
             authenticationTimeout = null;
           }
           
-          // 🔥 NOVO: Inicia período de estabilização
           startStabilizationPeriod();
           
           reconnectAttempts = 0;
@@ -577,7 +556,6 @@ async function connectWhatsApp() {
           console.log('   stats | blocked | users | clearsession\n');
           
         } else {
-          // Aguarda autenticação completar
           log('INFO', '⏳ Aguardando autenticação completar...');
           
           authenticationTimeout = setTimeout(() => {
@@ -597,7 +575,6 @@ async function connectWhatsApp() {
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       
-      // Ignora mensagens históricas
       if (type !== 'notify') {
         return;
       }
@@ -720,7 +697,6 @@ function setupConsoleCommands() {
     }
   });
 }
-
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
     log('WARNING', `⚠️ Rejection: ${err?.message}`);
