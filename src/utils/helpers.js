@@ -100,7 +100,6 @@ export function parseCommand(message) {
   // 🔥 COMANDOS CONFIGURÁVEIS DO .ENV
   const commandAssume = (process.env.COMMAND_ASSUME || '/assumir').toLowerCase();
   const commandRelease = (process.env.COMMAND_RELEASE || '/liberar').toLowerCase();
-  
   // 🔥 TODAS AS VARIAÇÕES ACEITAS PARA ASSUMIR
   const assumeVariations = [
     // Do .env
@@ -243,7 +242,6 @@ export function isNewLead(message) {
   
   return keywords.some(keyword => msg.includes(keyword));
 }
-
 /**
  * Limpa e normaliza mensagem
  * @param {string} message - Mensagem original
@@ -358,41 +356,62 @@ export function isValidMessage(message) {
 }
 
 /**
- * Extrai texto da mensagem (suporta diferentes tipos)
+ * 🔥 CORREÇÃO 5: Extrai texto da mensagem (suporta diferentes tipos)
+ * LOGGING DETALHADO IMPLEMENTADO CONFORME PROMPT
  * @param {Object} message - Objeto da mensagem
  * @returns {string|null}
  */
 export function extractMessageText(message) {
   try {
+    // 🔥 LOG: Função chamada
+    log('INFO', '🔍 extractMessageText() chamada');
+    
     const messageContent = message.message;
+    
+    // 🔥 LOG: Mostra estrutura da mensagem (primeiros 200 caracteres)
+    try {
+      const messageStructure = JSON.stringify(messageContent);
+      const truncated = messageStructure.length > 200 
+        ? messageStructure.substring(0, 200) + '...' 
+        : messageStructure;
+      log('INFO', `📦 Estrutura da mensagem: ${truncated}`);
+    } catch (e) {
+      log('WARNING', '⚠️ Não foi possível serializar estrutura da mensagem');
+    }
     
     // Mensagem de texto simples
     if (messageContent.conversation) {
+      log('SUCCESS', '📝 Texto extraído de conversation');
       return messageContent.conversation;
     }
     
     // Mensagem de texto estendida
     if (messageContent.extendedTextMessage?.text) {
+      log('SUCCESS', '📝 Texto extraído de extendedTextMessage');
       return messageContent.extendedTextMessage.text;
     }
     
     // Mensagem de imagem com legenda
     if (messageContent.imageMessage?.caption) {
+      log('SUCCESS', '📝 Texto extraído de caption de imagem');
       return messageContent.imageMessage.caption;
     }
     
     // Mensagem de vídeo com legenda
     if (messageContent.videoMessage?.caption) {
+      log('SUCCESS', '📝 Texto extraído de caption de vídeo');
       return messageContent.videoMessage.caption;
     }
     
+    // 🔥 LOG: Nenhum texto encontrado
+    log('WARNING', '❌ Nenhum texto encontrado na mensagem');
     return null;
+    
   } catch (error) {
-    console.error('Erro ao extrair texto:', error.message);
+    log('ERROR', `❌ Erro ao extrair texto: ${error.message}`);
     return null;
   }
 }
-
 /**
  * Calcula diferença de dias entre duas datas
  * @param {Date} date1 - Data mais recente
@@ -598,7 +617,6 @@ export function isValidPhoneNumber(phone) {
     return false;
   }
 }
-
 /**
  * 🔥 NOVA FUNÇÃO: Normaliza número de telefone para JID
  * Converte número de telefone para formato JID do WhatsApp
@@ -645,9 +663,9 @@ export function phoneToJid(phone) {
  * Útil para debug durante desenvolvimento
  */
 export function testParseCommand() {
-  console.log('\n🧪 ═══════════════════════════════════════');
+  console.log('\n🧪 ╔══════════════════════════════════════╗');
   console.log('🧪 TESTANDO FUNÇÃO parseCommand()');
-  console.log('🧪 ═══════════════════════════════════════\n');
+  console.log('🧪 ╚══════════════════════════════════════╝\n');
   
   const testCases = [
     '/assumir',
@@ -678,7 +696,7 @@ export function testParseCommand() {
     console.log(`   → isCommand: ${result.isCommand}, command: ${result.command || 'null'}, argument: ${result.argument || 'null'}\n`);
   });
   
-  console.log('🧪 ═══════════════════════════════════════\n');
+  console.log('🧪 ╚══════════════════════════════════════╝\n');
 }
 
 /**
@@ -686,9 +704,9 @@ export function testParseCommand() {
  * Útil para debug durante desenvolvimento
  */
 export function testHandoffDetection() {
-  console.log('\n🧪 ═══════════════════════════════════════');
+  console.log('\n🧪 ╔══════════════════════════════════════╗');
   console.log('🧪 TESTANDO FUNÇÃO detectHumanHandoffRequest()');
-  console.log('🧪 ═══════════════════════════════════════\n');
+  console.log('🧪 ╚══════════════════════════════════════╝\n');
   
   const testCases = [
     'quero falar com uma pessoa',
@@ -710,7 +728,7 @@ export function testHandoffDetection() {
     console.log(`   → Handoff solicitado: ${result ? 'SIM' : 'NÃO'}\n`);
   });
   
-  console.log('🧪 ═══════════════════════════════════════\n');
+  console.log('🧪 ╚══════════════════════════════════════╝\n');
 }
 
 export default {

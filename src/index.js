@@ -56,6 +56,11 @@ let isStabilizing = false;
 let stabilizationTimeout = null;
 let lastSuccessfulAuth = 0;
 
+// 📊 NOVO: Contadores para diagnóstico
+let totalMessagesReceived = 0;
+let totalMessagesProcessed = 0;
+let lastStatsLog = 0;
+
 const msgRetryCounterCache = new NodeCache();
 const processedMessages = new Set();
 const MESSAGE_CACHE_LIMIT = 1000;
@@ -105,7 +110,12 @@ function setupHealthServer() {
         stabilizing: isStabilizing,
         consecutive440: consecutive440Errors
       },
-      uptime: Math.floor(process.uptime())
+      uptime: Math.floor(process.uptime()),
+      messages: {
+        received: totalMessagesReceived,
+        processed: totalMessagesProcessed,
+        cached: processedMessages.size
+      }
     });
   });
   
@@ -245,7 +255,7 @@ function startPeriodicTasks() {
     }
   }, 5 * 60 * 1000);
   
-  log('SUCCESS', '✅ Tarefas iniciadas');
+  log('SUCCESS', '✅ Tarefas periódicas iniciadas');
 }
 
 function destroySocket() {
@@ -278,13 +288,16 @@ function startStabilizationPeriod() {
     clearTimeout(stabilizationTimeout);
   }
   
+  // 🔍 NOVO: Log detalhado do início da estabilização
+  log('INFO', `⏳ Iniciando período de estabilização (${POST_AUTH_STABILIZATION_TIME/1000}s)...`);
+  log('INFO', `🕐 Timestamp de autenticação: ${new Date(lastSuccessfulAuth).toLocaleTimeString()}`);
+  
   stabilizationTimeout = setTimeout(() => {
     isStabilizing = false;
     consecutive440Errors = 0;
     log('SUCCESS', '✅ Período de estabilização concluído - Bot totalmente operacional');
+    log('INFO', `📊 Mensagens recebidas: ${totalMessagesReceived} | Processadas: ${totalMessagesProcessed}`);
   }, POST_AUTH_STABILIZATION_TIME);
-  
-  log('INFO', `⏳ Iniciando período de estabilização (${POST_AUTH_STABILIZATION_TIME/1000}s)...`);
 }
 
 function shouldIgnore440Error() {
@@ -319,6 +332,23 @@ async function fetchBaileysVersionWithTimeout() {
     log('INFO', '📦 Usando versão fallback mais recente conhecida');
     
     return [2, 3000, 1019826820];
+  }
+}
+
+// 📊 NOVA FUNÇÃO: Estatísticas de mensagens
+function logMessageStats() {
+  const now = Date.now();
+  if (now - lastStatsLog < 30000) return; // Log a cada 30s no máximo
+  
+  lastStatsLog = now;
+  const diff = totalMessagesReceived - totalMessagesProcessed;
+  
+  if (totalMessagesReceived > 0) {
+    log('INFO', `📊 Stats: Recebidas=${totalMessagesReceived} | Processadas=${totalMessagesProcessed} | Bloqueadas=${diff} | Cache=${processedMessages.size}`);
+    
+    if (diff > 5) {
+      log('WARNING', `⚠️ ALERTA: ${diff} mensagens foram bloqueadas/rejeitadas!`);
+    }
   }
 }
 async function connectWhatsApp() {
@@ -572,31 +602,78 @@ async function connectWhatsApp() {
       }
     });
 
+    // 🔍 NOVO EVENT LISTENER COM LOGS DETALHADOS
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       
+      // 🔍 Log 1: Mensagens recebidas
+      log('INFO', `📥 Event 'messages.upsert' disparado | Tipo: ${type} | Quantidade: ${messages.length}`);
+      
       if (type !== 'notify') {
+        log('INFO', `⏭️ Tipo '${type}' ignorado (não é 'notify')`);
         return;
       }
 
+      // 🔍 Log 2: Informações sobre estabilização
+      if (isStabilizing) {
+        const timeSinceAuth = Date.now() - lastSuccessfulAuth;
+        log('INFO', `⏳ Bot em estabilização (${Math.round(timeSinceAuth/1000)}s desde auth)`);
+      }
+
+      // 🔍 Log 3: Processar cada mensagem
       for (const message of messages) {
         try {
-          if (!message.message) continue;
-
+          totalMessagesReceived++;
+          
+          // 🔍 Log 4: Info básica da mensagem
+          const from = message.key.remoteJid;
           const messageId = message.key.id;
+          const hasContent = !!message.message;
           
-          if (processedMessages.has(messageId)) continue;
+          log('INFO', `📨 Mensagem #${totalMessagesReceived} | De: ${from} | ID: ${messageId} | Conteúdo: ${hasContent ? 'SIM' : 'NÃO'}`);
+
+          if (!message.message) {
+            log('WARNING', `⚠️ Mensagem #${totalMessagesReceived} sem conteúdo - IGNORADA`);
+            continue;
+          }
+
+          // 🔍 Log 5: Verificar se é duplicada
+          if (processedMessages.has(messageId)) {
+            log('INFO', `🔄 Mensagem #${totalMessagesReceived} DUPLICADA (ID: ${messageId}) - IGNORADA`);
+            continue;
+          }
           
+          // 🔍 Log 6: Adicionar ao cache e salvar
           processedMessages.add(messageId);
+          log('INFO', `💾 Mensagem #${totalMessagesReceived} adicionada ao cache (total: ${processedMessages.size})`);
+          
           await saveMessageToDB(message);
+          log('INFO', `💿 Mensagem #${totalMessagesReceived} salva no MongoDB`);
+          
+          // 🔍 Log 7: ANTES de chamar processMessage
+          log('INFO', `🚀 Chamando processMessage() para mensagem #${totalMessagesReceived}...`);
+          
           await processMessage(sock, message);
+          
+          totalMessagesProcessed++;
+          log('SUCCESS', `✅ Mensagem #${totalMessagesReceived} PROCESSADA COM SUCESSO (total processadas: ${totalMessagesProcessed})`);
+          
+          // 🔍 Log 8: Stats a cada 10 mensagens
+          if (totalMessagesReceived % 10 === 0) {
+            logMessageStats();
+          }
 
         } catch (error) {
+          log('ERROR', `❌ Erro ao processar mensagem #${totalMessagesReceived}: ${error.message}`);
+          
           if (!error.message?.includes('Connection')) {
-            log('WARNING', `⚠️ Erro: ${error.message}`);
+            log('ERROR', `❌ Stack trace: ${error.stack?.substring(0, 200)}`);
           }
         }
       }
+      
+      // 🔍 Log 9: Resumo do batch
+      log('INFO', `✅ Batch processado | Total recebidas: ${totalMessagesReceived} | Total processadas: ${totalMessagesProcessed}`);
     });
 
     isConnecting = false;
@@ -604,9 +681,12 @@ async function connectWhatsApp() {
 
   } catch (error) {
     isConnecting = false;
-    log('ERROR', `❌ Erro: ${error.message}`);
+    log('ERROR', `❌ Erro na conexão: ${error.message}`);
+    log('ERROR', `❌ Stack: ${error.stack?.substring(0, 300)}`);
 
     const delay = getReconnectDelay(reconnectAttempts - 1);
+    log('INFO', `⏳ Tentando reconectar em ${Math.round(delay/1000)}s...`);
+    
     setTimeout(() => {
       connectWhatsApp();
     }, delay);
@@ -628,6 +708,7 @@ function setupConsoleCommands() {
     switch (command) {
       case 'stats':
         showStats();
+        logMessageStats(); // 🔍 NOVO: mostrar stats de mensagens
         break;
       case 'blocked':
         listBlockedUsers();
@@ -648,6 +729,8 @@ function setupConsoleCommands() {
         consecutive440Errors = 0;
         isStabilizing = false;
         totalReconnectAttempts = 0;
+        totalMessagesReceived = 0; // 🔍 NOVO
+        totalMessagesProcessed = 0; // 🔍 NOVO
         log('SUCCESS', '✅ Contadores resetados');
         break;
       case 'clearsession':
@@ -672,7 +755,15 @@ function setupConsoleCommands() {
         console.log(`   Conectado: ${!!(globalSock && globalSock.user)}`);
         console.log(`   Estabilizando: ${isStabilizing}`);
         console.log(`   Erros 440: ${consecutive440Errors}`);
-        console.log(`   Reconexões: ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}\n`);
+        console.log(`   Reconexões: ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+        console.log(`   Msgs Recebidas: ${totalMessagesReceived}`); // 🔍 NOVO
+        console.log(`   Msgs Processadas: ${totalMessagesProcessed}`); // 🔍 NOVO
+        console.log(`   Msgs Bloqueadas: ${totalMessagesReceived - totalMessagesProcessed}`); // 🔍 NOVO
+        console.log(`   Cache: ${processedMessages.size}\n`); // 🔍 NOVO
+        break;
+      case 'msgstats':
+        // 🔍 NOVO COMANDO
+        logMessageStats();
         break;
       case 'help':
         console.log('\n📋 COMANDOS:');
@@ -683,6 +774,7 @@ function setupConsoleCommands() {
         console.log('   reset        - Reset contadores');
         console.log('   clearsession - Limpar sessão');
         console.log('   status       - Status atual');
+        console.log('   msgstats     - Stats de mensagens'); // 🔍 NOVO
         console.log('   help         - Ajuda');
         console.log('   clear        - Limpar tela\n');
         break;
@@ -700,26 +792,65 @@ function setupConsoleCommands() {
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
     log('WARNING', `⚠️ Rejection: ${err?.message}`);
+    log('WARNING', `⚠️ Stack: ${err?.stack?.substring(0, 200)}`);
   }
 });
 
 process.on('uncaughtException', (err) => {
-  log('WARNING', `⚠️ Exception: ${err?.message}`);
+  log('ERROR', `❌ Exception: ${err?.message}`);
+  log('ERROR', `❌ Stack: ${err?.stack?.substring(0, 300)}`);
   
   if (String(err?.message || '').includes('Connection')) {
+    log('INFO', '🔄 Erro de conexão detectado - tentando reconectar...');
     setTimeout(() => connectWhatsApp(), getReconnectDelay(reconnectAttempts));
   } else {
+    log('ERROR', '❌ Erro crítico - encerrando processo');
     process.exit(1);
   }
 });
 
 const shutdown = async () => {
-  console.log('\n\n👋 Encerrando...');
-  if (cleanupInterval) clearInterval(cleanupInterval);
-  if (authenticationTimeout) clearTimeout(authenticationTimeout);
-  if (stabilizationTimeout) clearTimeout(stabilizationTimeout);
-  if (httpServer) httpServer.close();
-  if (mongoClient) await mongoClient.close();
+  console.log('\n\n👋 Encerrando bot...');
+  
+  // 🔍 NOVO: Log final de estatísticas
+  log('INFO', `📊 Estatísticas finais:`);
+  log('INFO', `   📥 Mensagens recebidas: ${totalMessagesReceived}`);
+  log('INFO', `   ✅ Mensagens processadas: ${totalMessagesProcessed}`);
+  log('INFO', `   ❌ Mensagens bloqueadas: ${totalMessagesReceived - totalMessagesProcessed}`);
+  log('INFO', `   🔄 Reconexões totais: ${totalReconnectAttempts}`);
+  log('INFO', `   💾 Cache de mensagens: ${processedMessages.size}`);
+  
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    log('INFO', '✅ Cleanup interval limpo');
+  }
+  
+  if (authenticationTimeout) {
+    clearTimeout(authenticationTimeout);
+    log('INFO', '✅ Auth timeout limpo');
+  }
+  
+  if (stabilizationTimeout) {
+    clearTimeout(stabilizationTimeout);
+    log('INFO', '✅ Stabilization timeout limpo');
+  }
+  
+  if (httpServer) {
+    httpServer.close();
+    log('INFO', '✅ Servidor HTTP encerrado');
+  }
+  
+  if (mongoClient) {
+    await mongoClient.close();
+    log('INFO', '✅ MongoDB desconectado');
+  }
+  
+  if (globalSock) {
+    destroySocket();
+    log('INFO', '✅ Socket destruído');
+  }
+  
+  log('SUCCESS', '👋 Bot encerrado com sucesso!');
   process.exit(0);
 };
 
@@ -727,8 +858,32 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 async function startBot() {
-  initializeOnce();
-  await connectWhatsApp();
+  try {
+    log('INFO', '🚀 Iniciando bot...');
+    
+    initializeOnce();
+    
+    log('INFO', '📊 Inicializando contadores de mensagens...');
+    totalMessagesReceived = 0;
+    totalMessagesProcessed = 0;
+    lastStatsLog = 0;
+    
+    log('INFO', '🔌 Iniciando conexão com WhatsApp...');
+    await connectWhatsApp();
+    
+    log('SUCCESS', '✅ Bot iniciado com sucesso!');
+    
+  } catch (error) {
+    log('ERROR', `❌ Erro fatal ao iniciar bot: ${error.message}`);
+    log('ERROR', `❌ Stack: ${error.stack}`);
+    process.exit(1);
+  }
 }
+
+// 🔍 NOVO: Log de inicialização
+console.log('\n🤖 ════════════════════════════════════════════════════════');
+console.log('🤖 INICIANDO CHAT BOT WHATSAPP - STREAM STUDIO');
+console.log('🤖 Versão com diagnóstico detalhado de mensagens');
+console.log('🤖 ════════════════════════════════════════════════════════\n');
 
 startBot();

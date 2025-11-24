@@ -27,7 +27,7 @@ import {
   getOwnerMessageCount,
   recordResponseTime,
   setOwnerProspecting,
-  updateUser // 🆕 ADICIONADO para atualização de email
+  updateUser
 } from '../services/database.js';
 
 import {
@@ -38,7 +38,7 @@ import {
   addToHistory,
   getSalesStats,
   analyzeProspectionMessage,
-  handleEvaluationRequest // 🆕 ADICIONADO para gerenciar avaliação
+  handleEvaluationRequest
 } from '../services/ai.js';
 
 import {
@@ -55,7 +55,7 @@ const BOT_START_TIME = Date.now();
 const processedMessages = new Set();
 const MAX_PROCESSED_CACHE = 1000;
 
-// 🔥 NOVO: Cache de timestamps de última mensagem (para detectar chatbot)
+// 🔥 Cache de timestamps de última mensagem
 const lastUserMessageTimestamp = new Map();
 
 /**
@@ -71,13 +71,11 @@ function cleanupDebounceMap() {
     }
   }
   
-  // Limpa cache de mensagens
   if (processedMessages.size > MAX_PROCESSED_CACHE) {
     processedMessages.clear();
     log('INFO', '🧹 Cache de mensagens processadas limpo');
   }
 
-  // Limpa cache de timestamps
   for (const [jid, timestamp] of lastUserMessageTimestamp.entries()) {
     if (now - timestamp > MAX_AGE) {
       lastUserMessageTimestamp.delete(jid);
@@ -88,13 +86,14 @@ function cleanupDebounceMap() {
 setInterval(cleanupDebounceMap, 120000);
 
 /**
- * Verifica se a mensagem é RECENTE
+ * 🔥 CORREÇÃO 3: Verifica se a mensagem é RECENTE (COM LOGS SEMPRE ATIVOS)
  */
 function isRecentMessage(message) {
   try {
     const messageTimestamp = message.messageTimestamp;
     
     if (!messageTimestamp) {
+      log('INFO', '⏰ Mensagem sem timestamp - considerando como recente');
       return true;
     }
     
@@ -106,93 +105,102 @@ function isRecentMessage(message) {
         ? messageTimestamp * 1000 
         : messageTimestamp;
     } else {
+      log('INFO', '⏰ Timestamp em formato desconhecido - considerando como recente');
       return true;
     }
     
     const isRecent = messageTime >= BOT_START_TIME;
     
-    if (process.env.DEBUG_MODE === 'true') {
-      const messageDate = new Date(messageTime).toISOString();
-      const botStartDate = new Date(BOT_START_TIME).toISOString();
-      log('INFO', `📅 Mensagem: ${messageDate} | Bot: ${botStartDate} | Recente: ${isRecent}`);
+    // 🔥 SEMPRE LOGA (removido DEBUG_MODE)
+    const messageDate = new Date(messageTime).toISOString();
+    const botStartDate = new Date(BOT_START_TIME).toISOString();
+    const diffSeconds = Math.floor((Date.now() - messageTime) / 1000);
+    
+    if (isRecent) {
+      log('SUCCESS', `✅ Mensagem RECENTE aceita - Enviada: ${messageDate} (${diffSeconds}s atrás)`);
+    } else {
+      log('WARNING', `❌ Mensagem ANTIGA rejeitada - Enviada: ${messageDate} | Bot iniciou: ${botStartDate} (diferença: ${diffSeconds}s)`);
     }
     
     return isRecent;
     
   } catch (error) {
-    if (process.env.DEBUG_MODE === 'true') {
-      log('WARNING', `⚠️ Erro ao verificar idade da mensagem: ${error.message}`);
-    }
+    log('WARNING', `⚠️ Erro ao verificar idade da mensagem: ${error.message}`);
     return true;
   }
 }
-
 /**
- * Valida se mensagem deve ser processada
+ * 🔥 CORREÇÃO 2: Valida se mensagem deve ser processada (COM LOGS SEMPRE ATIVOS)
  */
 function shouldProcessMessage(message) {
+  // 🔥 Log no início da função
+  log('INFO', '🔍 shouldProcessMessage() chamada - iniciando validações...');
+  
   try {
     if (!message || !message.key) {
+      log('WARNING', '❌ VALIDAÇÃO FALHOU: Mensagem sem estrutura básica (message.key ausente)');
       return false;
     }
     
     const jid = message.key.remoteJid;
     
+    // 🔥 Log do JID detectado
+    log('INFO', `📱 JID detectado: ${jid}`);
+    
     // Ignora broadcast
     if (jid === 'status@broadcast' || jid?.includes('broadcast')) {
-      if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭ Ignorando broadcast');
-      }
+      log('INFO', '⭕ VALIDAÇÃO FALHOU: Mensagem é broadcast - ignorando');
       return false;
     }
     
     // Ignora grupos
     if (jid?.endsWith('@g.us')) {
-      if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭ Ignorando grupo');
-      }
+      log('INFO', '⭕ VALIDAÇÃO FALHOU: Mensagem é de grupo - ignorando');
       return false;
     }
     
     // Valida conversa individual
     if (!jid?.endsWith('@s.whatsapp.net')) {
+      log('WARNING', `❌ VALIDAÇÃO FALHOU: JID inválido para conversa individual (${jid})`);
       return false;
     }
     
     // Verifica se já foi processada
     const messageId = message.key.id;
     if (messageId && processedMessages.has(messageId)) {
-      if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭ Mensagem já processada');
-      }
+      log('INFO', `⭕ VALIDAÇÃO FALHOU: Mensagem duplicada (ID: ${messageId.substring(0, 20)}...)`);
       return false;
     }
+    
+    // 🔥 Log antes de verificar se é recente
+    log('INFO', '⏰ Verificando se mensagem é recente...');
     
     // Verifica se é recente
     if (!isRecentMessage(message)) {
-      if (process.env.DEBUG_MODE === 'true') {
-        log('INFO', '⏭ Ignorando mensagem antiga');
-      }
+      log('WARNING', '❌ VALIDAÇÃO FALHOU: Mensagem rejeitada por isRecentMessage() - muito antiga');
       return false;
     }
     
+    // 🔥 Se chegou aqui, passou em todas as validações
+    log('SUCCESS', `✅ TODAS VALIDAÇÕES PASSARAM - Mensagem será processada (JID: ${jid})`);
     return true;
     
   } catch (error) {
     log('WARNING', `⚠️ Erro ao validar mensagem: ${error.message}`);
+    log('WARNING', `❌ VALIDAÇÃO FALHOU: Exceção capturada - ${error.stack}`);
     return false;
   }
 }
 
 /**
- * 🔥 NOVO: Calcula tempo de resposta do lead (para detectar chatbot)
+ * 🔥 Calcula tempo de resposta do lead (para detectar chatbot)
  */
 function calculateLeadResponseTime(jid) {
   const now = Date.now();
   const lastTimestamp = lastUserMessageTimestamp.get(jid);
   
   if (!lastTimestamp) {
-    return null; // Primeira mensagem, não há tempo de resposta
+    return null;
   }
   
   const responseTimeMs = now - lastTimestamp;
@@ -200,71 +208,82 @@ function calculateLeadResponseTime(jid) {
   
   return responseTimeSec;
 }
+
 /**
- * 🔥 HANDLER PRINCIPAL - VERSÃO COM PROSPECÇÃO ATIVA E BLOQUEIO INTELIGENTE
+ * 🔥 HANDLER PRINCIPAL - VERSÃO COM LOGS DE DIAGNÓSTICO COMPLETOS
  */
 export async function handleIncomingMessage(sock, message) {
+  // 🔥 CORREÇÃO 4: Log no início
+  log('INFO', '🔍 ============================================');
+  log('INFO', '🔍 handleIncomingMessage() CHAMADA');
+  log('INFO', '🔍 ============================================');
+  
   try {
-    // 🔥 Validação inicial
-    if (!shouldProcessMessage(message)) {
-      return;
-    }
+    // 🔥 Validação inicial com logs específicos
+    log('INFO', '📋 Etapa 1/7: Validando estrutura da mensagem...');
     
-    if (!isValidMessage(message)) {
+    if (!shouldProcessMessage(message)) {
+      log('WARNING', '❌ Mensagem rejeitada por shouldProcessMessage() - encerrando processamento');
       return;
     }
+    log('SUCCESS', '✅ Etapa 1/7: shouldProcessMessage() passou');
+    
+    log('INFO', '📋 Etapa 2/7: Validando conteúdo da mensagem...');
+    if (!isValidMessage(message)) {
+      log('WARNING', '❌ Mensagem rejeitada por isValidMessage() - conteúdo inválido');
+      return;
+    }
+    log('SUCCESS', '✅ Etapa 2/7: isValidMessage() passou');
     
     const jid = message.key.remoteJid;
+    
+    log('INFO', '📋 Etapa 3/7: Extraindo texto da mensagem...');
     const messageText = extractMessageText(message);
     
     if (!messageText) {
+      log('WARNING', '❌ Mensagem rejeitada - sem texto extraível (provavelmente mídia sem caption)');
+      log('INFO', `🔍 Estrutura da mensagem: ${JSON.stringify(message.message, null, 2).substring(0, 500)}...`);
       return;
     }
+    log('SUCCESS', `✅ Etapa 3/7: Texto extraído com sucesso (${messageText.length} caracteres)`);
     
     // Marca como processada
     const messageId = message.key.id;
     if (messageId) {
       processedMessages.add(messageId);
+      log('INFO', `📝 Mensagem marcada como processada (ID: ${messageId.substring(0, 20)}...)`);
     }
-
     // ==========================================
     // 🔥 SISTEMA DE BLOQUEIO INTELIGENTE
     // ==========================================
     
+    log('INFO', '📋 Etapa 4/7: Verificando se mensagem é do owner...');
+    
     if (message?.key?.fromMe) {
-      // 🔥 CORREÇÃO CRÍTICA: Usar remoteJid para identificar destinatário ESPECÍFICO
+      log('INFO', '👤 Mensagem enviada pelo OWNER detectada');
+      
       const targetJid = message.key.remoteJid;
       const clientPhone = extractPhoneNumber(targetJid);
       
       if (isRecentMessage(message)) {
         try {
-          // 🔥 NOVA LÓGICA: Incrementa contador de mensagens do owner
           const ownerMsgCount = await incrementOwnerMessageCount(targetJid);
           
           log('INFO', `👤 Owner enviou mensagem para ${clientPhone} (contador: ${ownerMsgCount})`);
           
-          // 🔥 PRIMEIRA MENSAGEM: Marca como prospecção ativa, mas NÃO bloqueia
           if (ownerMsgCount === 1) {
             await setOwnerProspecting(targetJid, true);
             log('SUCCESS', `🎯 Prospecção ativa iniciada para ${clientPhone} - IA PERMANECE ATIVA`);
           }
-          
-          // 🔥 SEGUNDA MENSAGEM: Bloqueia IA APENAS para este JID específico
           else if (ownerMsgCount === 2) {
             await blockBotForUser(targetJid);
             log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu (2ª mensagem)`);
           }
-          
-          // Mensagens adicionais apenas reforçam o bloqueio
           else {
             const isAlreadyBlocked = await isBotBlockedForUser(targetJid);
             if (!isAlreadyBlocked) {
               await blockBotForUser(targetJid);
               log('SUCCESS', `🔒 IA BLOQUEADA para ${clientPhone} - Owner assumiu`);
-            } else {
-              if (process.env.DEBUG_MODE === 'true') {
-                log('INFO', `ℹ️ IA já estava bloqueada para ${clientPhone}`);
-              }
             }
           }
           
@@ -272,21 +291,30 @@ export async function handleIncomingMessage(sock, message) {
           log('WARNING', `⚠️ Erro ao processar mensagem do owner: ${err.message}`);
         }
       } else {
-        if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', `⏭ Ignorando mensagem ANTIGA do owner para ${clientPhone}`);
-        }
+        log('INFO', `⭕ Ignorando mensagem ANTIGA do owner para ${clientPhone}`);
       }
       
-      return; // Owner não gera resposta da IA
+      log('INFO', '✅ Processamento de mensagem do owner concluído - encerrando (owner não gera resposta IA)');
+      return;
     }
+    
+    log('SUCCESS', '✅ Etapa 4/7: Mensagem NÃO é do owner - prosseguindo');
 
     // ==========================================
-    // 🔥 VERIFICAÇÃO DE BLOQUEIO (IA desabilitada para este JID?)
+    // 🔥 VERIFICAÇÃO DE BLOQUEIO
     // ==========================================
+    
+    log('INFO', '📋 Etapa 5/7: Verificando se IA está bloqueada para este contato...');
     
     let isBlocked = false;
     try {
       isBlocked = await isBotBlockedForUser(jid);
+      
+      if (isBlocked) {
+        log('WARNING', `🚫 IA BLOQUEADA para este contato - encerrando processamento`);
+      } else {
+        log('SUCCESS', '✅ IA NÃO está bloqueada - prosseguindo');
+      }
     } catch (err) {
       log('WARNING', `⚠️ Erro ao verificar bloqueio: ${err.message}`);
       isBlocked = false;
@@ -297,10 +325,14 @@ export async function handleIncomingMessage(sock, message) {
       log('WARNING', `🚫 MENSAGEM IGNORADA - Bot bloqueado para ${clientPhone} (Owner em atendimento)`);
       return;
     }
+    
+    log('SUCCESS', '✅ Etapa 5/7: Verificação de bloqueio passou');
 
     // ==========================================
     // 🔥 DETECÇÃO DE SOLICITAÇÃO DE ATENDIMENTO HUMANO
     // ==========================================
+    
+    log('INFO', '📋 Etapa 6/7: Verificando solicitação de handoff...');
     
     const wantsHumanHandoff = detectHumanHandoffRequest(messageText);
     
@@ -310,7 +342,6 @@ export async function handleIncomingMessage(sock, message) {
       
       log('INFO', `🤝 ${pushName} solicitou atendimento humano - Transferindo...`);
       
-      // Bloqueia IA e notifica
       await blockBotForUser(jid);
       
       const handoffMessage = `Claro, ${pushName}! Vou transferir você para o Roberto agora mesmo 😊\n\nEle já está ciente da nossa conversa e vai te atender em instantes!\n\nFoi um prazer conversar com você! 🤖💙`;
@@ -322,11 +353,14 @@ export async function handleIncomingMessage(sock, message) {
       log('SUCCESS', `✅ Handoff realizado para ${clientPhone}`);
       return;
     }
+    
+    log('SUCCESS', '✅ Etapa 6/7: Nenhum handoff solicitado - prosseguindo para processamento IA');
 
     // Debounce
     const now = Date.now();
     const lastTime = lastMessageTime.get(jid) || 0;
     if (now - lastTime < DEBOUNCE_DELAY) {
+      log('INFO', '⏱️ Debounce ativo - ignorando mensagem duplicada rápida');
       return;
     }
     lastMessageTime.set(jid, now);
@@ -335,44 +369,45 @@ export async function handleIncomingMessage(sock, message) {
     const pushName = message.pushName || 'Cliente';
     const phone = extractPhoneNumber(jid);
     
+    // 🔥 LOG PRINCIPAL - Se chegou aqui, mensagem passou por TODAS as validações
+    log('SUCCESS', '✅ ============================================');
+    log('SUCCESS', '✅ MENSAGEM PASSOU POR TODAS AS VALIDAÇÕES!');
+    log('SUCCESS', '✅ ============================================');
     log('INFO', `📩 ${pushName} (${phone}): "${cleanedMessage.substring(0, 50)}${cleanedMessage.length > 50 ? '...' : ''}"`);
 
     // ==========================================
-    // 🔥 CÁLCULO DE TEMPO DE RESPOSTA (Detectar Chatbot)
+    // 🔥 CÁLCULO DE TEMPO DE RESPOSTA
     // ==========================================
     
     const responseTime = calculateLeadResponseTime(jid);
     
     if (responseTime !== null) {
-      // Registra no banco para análise posterior
       try {
         await recordResponseTime(jid, responseTime);
-        
-        if (process.env.DEBUG_MODE === 'true') {
-          log('INFO', `⏱️ Tempo de resposta: ${responseTime}s`);
-        }
+        log('INFO', `⏱️ Tempo de resposta: ${responseTime}s`);
       } catch (err) {
         log('WARNING', `⚠️ Erro ao registrar tempo de resposta: ${err.message}`);
       }
     }
     
-    // Atualiza timestamp da última mensagem do usuário
     lastUserMessageTimestamp.set(jid, now);
 
     // ==========================================
     // 🔥 VERIFICAÇÃO: Primeira interação
     // ==========================================
     
+    log('INFO', '📋 Etapa 7/7: Processando mensagem com IA...');
+    
     let userExists = false;
     try {
       userExists = await isExistingUser(jid);
+      log('INFO', `🔍 Usuário existe no banco: ${userExists ? 'SIM' : 'NÃO (primeira vez)'}`);
     } catch (err) {
       log('WARNING', `⚠️ Erro ao verificar usuário: ${err.message}`);
       userExists = false;
     }
     
     const isFirstContact = !userExists;
-    
     // ==========================================
     // 🔥 DETECÇÃO DE PROSPECÇÃO ATIVA
     // ==========================================
@@ -381,18 +416,21 @@ export async function handleIncomingMessage(sock, message) {
     try {
       const user = await getUser(jid);
       isOwnerProspecting = user?.isOwnerProspecting || false;
+      
+      if (isOwnerProspecting) {
+        log('INFO', `🎯 MODO PROSPECÇÃO ATIVA detectado para ${phone}`);
+      }
     } catch (err) {
       log('WARNING', `⚠️ Erro ao verificar prospecção: ${err.message}`);
     }
-    
-    if (isOwnerProspecting) {
-      log('INFO', `🎯 MODO PROSPECÇÃO ATIVA para ${phone}`);
-    }
+
     // ==========================================
-    // 🔥 PRIMEIRA MENSAGEM - 🆕 COM DETECÇÃO DE EMAIL
+    // 🔥 PRIMEIRA MENSAGEM - COM DETECÇÃO DE EMAIL
     // ==========================================
     
     if (isFirstContact) {
+      log('INFO', '🆕 PROCESSANDO PRIMEIRA MENSAGEM (novo contato)');
+      
       const hasLeadKeywords = isNewLead(cleanedMessage);
       
       await saveUser(jid, { 
@@ -400,7 +438,7 @@ export async function handleIncomingMessage(sock, message) {
         isNewLead: true
       });
       
-      // 🆕 MUDANÇA 1: DETECTA SE JÁ VEIO COM EMAIL (raro mas possível)
+      // 🔥 DETECÇÃO DE EMAIL NA PRIMEIRA MENSAGEM
       const emailRegex = /[\w.-]+@[\w.-]+\.\w+/;
       const emailMatch = cleanedMessage.match(emailRegex);
       
@@ -408,7 +446,6 @@ export async function handleIncomingMessage(sock, message) {
         const email = emailMatch[0];
         log('SUCCESS', `🎯 EMAIL CAPTURADO na primeira mensagem: ${email}`);
         
-        // Salva email no contexto do usuário
         await updateUser(jid, { 
           email: email,
           emailCapturedAt: new Date()
@@ -434,14 +471,12 @@ Tem mais alguma dúvida? 😊`;
         addToHistory(phone, 'user', cleanedMessage);
         addToHistory(phone, 'assistant', emailResponse);
         
-        // 🔔 NOTIFICAR OWNER (implementar integração futura)
         log('SUCCESS', `🔔 CONVERSÃO! ${pushName} (${phone}) → ${email}`);
         
         return;
       }
       
-      // ... continua com lógica normal de boas-vindas ...
-      
+      // Sem email - continua com boas-vindas normais
       if (hasLeadKeywords) {
         await markAsNewLead(jid, pushName);
         log('SUCCESS', `🎯 NOVO LEAD (com keywords): ${pushName}`);
@@ -451,35 +486,37 @@ Tem mais alguma dúvida? 😊`;
       
       await simulateTyping(sock, jid, 1500);
       
-      // 🔥 Se owner iniciou prospecção, IA usa abordagem reveladora
       const isProspectionMode = isOwnerProspecting;
+      
+      log('INFO', '🤖 Gerando mensagem de boas-vindas com IA...');
       
       const welcomeMsg = await generateWelcomeMessage(
         pushName, 
-        true, // sempre lead na primeira mensagem
-        isProspectionMode, // indica se é prospecção ativa
-        responseTime // passa tempo de resposta para análise
+        true,
+        isProspectionMode,
+        responseTime
       );
+      
+      log('SUCCESS', `✅ Mensagem de boas-vindas gerada (${welcomeMsg.length} caracteres)`);
       
       await sock.sendMessage(jid, { text: welcomeMsg }).catch((err) => {
         log('WARNING', `⚠️ Erro ao enviar mensagem: ${err.message}`);
       });
       
-      // Registra no histórico da IA
       try {
         addToHistory(phone, 'user', cleanedMessage);
         addToHistory(phone, 'assistant', welcomeMsg);
-        log('SUCCESS', `📝 Histórico registrado`);
+        log('SUCCESS', `📝 Histórico registrado na IA`);
       } catch (err) {
         log('WARNING', `⚠️ Erro ao salvar histórico da IA: ${err.message}`);
       }
       
-      // Salva no banco
       try {
         await saveConversationHistory(jid, [
           { role: 'user', content: cleanedMessage },
           { role: 'assistant', content: welcomeMsg }
         ]);
+        log('SUCCESS', `💾 Histórico salvo no banco de dados`);
       } catch (err) {
         log('WARNING', `⚠️ Erro ao salvar histórico no DB: ${err.message}`);
       }
@@ -490,30 +527,29 @@ Tem mais alguma dúvida? 😊`;
         log('SUCCESS', `✅ Boas-vindas enviadas (LEAD - Vendas Consultivas Ativas)`);
       }
       
-      // 🔥 Log de estatísticas de vendas
-      if (process.env.DEBUG_MODE === 'true') {
-        try {
-          const salesStats = getSalesStats();
-          log('INFO', `📊 Leads Ativos: ${salesStats.totalLeads} | Em Descoberta: ${salesStats.byStage.discovery}`);
-        } catch (err) {
-          // Ignora erro de stats
-        }
+      // 🔥 Log de estatísticas
+      try {
+        const salesStats = getSalesStats();
+        log('INFO', `📊 Leads Ativos: ${salesStats.totalLeads} | Em Descoberta: ${salesStats.byStage.discovery}`);
+      } catch (err) {
+        // Ignora erro de stats
       }
       
       return;
     }
 
     // ==========================================
-    // 🔥 MENSAGENS SEGUINTES - 🆕 COM PRIORIZAÇÃO DE EMAIL
+    // 🔥 MENSAGENS SEGUINTES - COM PRIORIZAÇÃO DE EMAIL
     // ==========================================
     
-    log('INFO', `🔨 Processando mensagem de ${pushName}`);
+    log('INFO', `📨 PROCESSANDO MENSAGEM SUBSEQUENTE de ${pushName}`);
     
     await saveUser(jid, { name: pushName });
     
     const isLead = await isLeadUser(jid);
+    log('INFO', `🔍 Usuário é lead: ${isLead ? 'SIM' : 'NÃO (cliente existente)'}`);
     
-    // 🆕 MUDANÇA 2: DETECTA EMAIL EM QUALQUER MENSAGEM (PRIORIDADE MÁXIMA)
+    // 🔥 DETECÇÃO DE EMAIL EM QUALQUER MENSAGEM
     const emailRegex = /[\w.-]+@[\w.-]+\.\w+/;
     const emailMatch = cleanedMessage.match(emailRegex);
 
@@ -521,7 +557,6 @@ Tem mais alguma dúvida? 😊`;
       const email = emailMatch[0];
       const user = await getUser(jid);
       
-      // Só processa se for novo email (não capturado antes)
       if (!user?.email || user.email !== email) {
         log('SUCCESS', `🎯 NOVO EMAIL CAPTURADO: ${email} - ${pushName}`);
         
@@ -541,24 +576,23 @@ Tem mais alguma dúvida? 😊`;
         addToHistory(phone, 'user', cleanedMessage);
         addToHistory(phone, 'assistant', emailResponse);
         
-        // 🔔 NOTIFICAR OWNER
         log('SUCCESS', `🔔 CONVERSÃO! ${pushName} (${phone}) → ${email}`);
         
-        return; // Não processa mais nada, email é prioridade máxima
+        return;
+      } else {
+        log('INFO', `ℹ️ Email já capturado anteriormente: ${email}`);
       }
     }
     
-    // ... continua com processamento normal ...
-    
+    // Continua com processamento normal
     await simulateTyping(sock, jid, 1500);
     
     let aiResponse;
     
     try {
       if (isLead) {
-        // 🔥 PROCESSAMENTO DE LEAD COM VENDAS CONSULTIVAS / PROSPECÇÃO
+        log('INFO', '🤖 Processando como LEAD (vendas consultivas)...');
         
-        // 🔥 NOVO: Detecta tipo de interlocutor se for prospecção ativa
         let interlocutorType = null;
         
         if (isOwnerProspecting && responseTime !== null) {
@@ -574,7 +608,8 @@ Tem mais alguma dúvida? 😊`;
           }
         }
         
-        // 🔥 Processa mensagem com contexto de prospecção
+        log('INFO', '🧠 Chamando IA para gerar resposta de lead...');
+        
         aiResponse = await processLeadMessage(
           phone, 
           pushName, 
@@ -586,12 +621,15 @@ Tem mais alguma dúvida? 😊`;
           }
         );
         
-        // 🔥 Verifica se deve enviar link da fanpage
+        log('SUCCESS', `✅ Resposta IA gerada para LEAD (${aiResponse?.length || 0} caracteres)`);
+        // Verifica se deve enviar fanpage
         if (shouldSendFanpageLink(cleanedMessage) || 
             cleanedMessage.toLowerCase().includes('quero') ||
             cleanedMessage.toLowerCase().includes('interesse') ||
             cleanedMessage.toLowerCase().includes('teste') ||
             cleanedMessage.toLowerCase().includes('demonstra')) {
+          
+          log('INFO', '🌐 Enviando link da fanpage (interesse detectado)...');
           
           await simulateTyping(sock, jid, 1000);
           
@@ -611,19 +649,28 @@ Tem mais alguma dúvida? 😊`;
         }
         
       } else {
-        // 🔥 PROCESSAMENTO DE CLIENTE EXISTENTE
+        log('INFO', '🤖 Processando como CLIENTE EXISTENTE...');
+        log('INFO', '🧠 Chamando IA para gerar resposta de cliente...');
+        
         aiResponse = await processClientMessage(phone, pushName, cleanedMessage);
-        log('SUCCESS', `✅ Resposta IA gerada (CLIENTE)`);
+        
+        log('SUCCESS', `✅ Resposta IA gerada (CLIENTE) - ${aiResponse?.length || 0} caracteres`);
       }
       
       if (aiResponse) {
+        log('INFO', '📤 Enviando resposta ao usuário...');
+        
         await sock.sendMessage(jid, { text: aiResponse }).catch((err) => {
           log('WARNING', `⚠️ Erro ao enviar resposta: ${err.message}`);
         });
+        
+        log('SUCCESS', `✅ Resposta enviada com sucesso para ${pushName}`);
+      } else {
+        log('WARNING', '⚠️ IA não gerou resposta (aiResponse vazio)');
       }
       
-      // 🔥 Log de estatísticas após cada interação (debug)
-      if (process.env.DEBUG_MODE === 'true' && isLead) {
+      // Log de estatísticas após interação
+      if (isLead) {
         try {
           const salesStats = getSalesStats();
           log('INFO', `📊 Vendas | Descoberta: ${salesStats.byStage.discovery} | Recomendação: ${salesStats.byStage.recommendation} | Fechamento: ${salesStats.byStage.closing}`);
@@ -634,22 +681,24 @@ Tem mais alguma dúvida? 😊`;
       
     } catch (error) {
       log('WARNING', `⚠️ Erro ao gerar resposta da IA: ${error.message}`);
+      log('WARNING', `🔍 Stack trace: ${error.stack}`);
       
-      // Mensagem de erro ao usuário
       const errorMsg = `Desculpe ${pushName}, estou com dificuldades técnicas no momento. 😅\n\nPor favor, aguarde que logo você será atendido!`;
       await sock.sendMessage(jid, { text: errorMsg }).catch(() => {});
     }
 
   } catch (error) {
-    // Log de erro sem expor detalhes sensíveis
     if (!error.message?.includes('Connection') && !error.message?.includes('Stream')) {
-      log('WARNING', `⚠️ Erro ao processar mensagem: ${error.message}`);
-      if (process.env.DEBUG_MODE === 'true') {
-        console.error('Stack trace:', error.stack);
-      }
+      log('WARNING', `⚠️ ERRO CRÍTICO ao processar mensagem: ${error.message}`);
+      log('WARNING', `🔍 Stack trace completo: ${error.stack}`);
     }
   }
+  
+  log('INFO', '🔍 ============================================');
+  log('INFO', '🔍 handleIncomingMessage() FINALIZADA');
+  log('INFO', '🔍 ============================================\n');
 }
+
 /**
  * Processa mensagem (wrapper)
  */
@@ -658,7 +707,7 @@ export async function processMessage(sock, message) {
     await handleIncomingMessage(sock, message);
   } catch (error) {
     if (!error.message?.includes('Connection') && !error.message?.includes('Stream')) {
-      log('WARNING', `⚠️ Erro crítico: ${error.message}`);
+      log('WARNING', `⚠️ Erro crítico no processMessage: ${error.message}`);
     }
   }
 }
@@ -685,7 +734,7 @@ export function getHandlerStats() {
 }
 
 /**
- * 🔥 NOVO: Mostra estatísticas completas (handler + vendas)
+ * 🔥 Mostra estatísticas completas (handler + vendas)
  */
 export function showCompleteStats() {
   const handlerStats = getHandlerStats();
@@ -723,7 +772,7 @@ export function showCompleteStats() {
 }
 
 /**
- * 🔥 NOVO: Comando para visualizar estado atual de um cliente
+ * 🔥 Comando para visualizar estado atual de um cliente
  */
 export async function showClientStatus(phone) {
   if (!phone) {
@@ -751,7 +800,6 @@ export async function showClientStatus(phone) {
     console.log(`   Necessidades Detectadas: ${details.salesContext.detectedNeeds.length}`);
     console.log(`   Objeções: ${details.salesContext.objections.length}`);
     
-    // 🔥 NOVO: Informações de prospecção
     if (details.salesContext.isProspecting) {
       console.log('');
       console.log('🎯 PROSPECÇÃO ATIVA:');
@@ -775,7 +823,7 @@ export async function showClientStatus(phone) {
 }
 
 /**
- * 🔥 NOVO: Lista conversas onde owner está prospectando
+ * 🔥 Lista conversas onde owner está prospectando
  */
 export async function listOwnerConversations() {
   console.log('\n🎯 CONVERSAS DE PROSPECÇÃO ATIVA');
