@@ -9,7 +9,7 @@ import makeWASocket, {
 import { MongoClient } from 'mongodb';
 import NodeCache from 'node-cache';
 import pino from 'pino';
-import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import { Boom } from '@hapi/boom';
 import dotenv from 'dotenv';
 import readline from 'readline';
@@ -42,6 +42,11 @@ const FETCH_VERSION_TIMEOUT = 10000;
 
 // 🔥 Timestamp de inicialização do bot
 const BOT_START_TIME = Date.now();
+
+// 🔥 NOVO: Armazenamento do QR Code
+let currentQRCode = null;
+let qrCodeTimestamp = null;
+const QR_CODE_TIMEOUT = 60000; // 60 segundos
 
 let mongoClient = null;
 let globalSock = null;
@@ -92,11 +97,262 @@ function showBanner() {
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `🌍 Platform: ${process.env.RENDER ? 'Render' : process.env.FLY_APP_NAME ? 'Fly.io' : 'Local'}\n`);
 }
-
 function setupHealthServer() {
   if (httpServer) return httpServer;
 
   const app = express();
+  
+  // 🔥 NOVO: Endpoint para exibir QR Code
+  app.get('/qr', async (req, res) => {
+    try {
+      // Verifica se bot já está conectado
+      if (globalSock && globalSock.user) {
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>${BOT_NAME} - QR Code</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              }
+              .container {
+                background: white;
+                padding: 40px;
+                border-radius: 20px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
+                max-width: 500px;
+              }
+              h1 { color: #25D366; margin-bottom: 20px; }
+              .success { font-size: 60px; margin: 20px 0; }
+              p { color: #666; font-size: 18px; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>✅ Bot Conectado!</h1>
+              <div class="success">🎉</div>
+              <p>O WhatsApp já está autenticado e funcionando.</p>
+              <p><strong>Número:</strong> ${globalSock.user.id.split(':')[0]}</p>
+            </div>
+          </body>
+          </html>
+        `);
+      }
+
+      // Verifica se QR Code existe e não expirou
+      const now = Date.now();
+      if (!currentQRCode || !qrCodeTimestamp || (now - qrCodeTimestamp > QR_CODE_TIMEOUT)) {
+        return res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>${BOT_NAME} - QR Code</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              }
+              .container {
+                background: white;
+                padding: 40px;
+                border-radius: 20px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                text-align: center;
+                max-width: 500px;
+              }
+              h1 { color: #ff6b6b; margin-bottom: 20px; }
+              .icon { font-size: 60px; margin: 20px 0; }
+              p { color: #666; font-size: 16px; line-height: 1.6; }
+              .refresh-btn {
+                margin-top: 20px;
+                padding: 12px 30px;
+                background: #667eea;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                cursor: pointer;
+              }
+              .refresh-btn:hover { background: #5568d3; }
+            </style>
+            <script>
+              setTimeout(() => location.reload(), 5000);
+            </script>
+          </head>
+          <body>
+            <div class="container">
+              <h1>⏳ Aguardando QR Code</h1>
+              <div class="icon">📱</div>
+              <p>O bot está iniciando a conexão com o WhatsApp...</p>
+              <p><small>Esta página será atualizada automaticamente a cada 5 segundos.</small></p>
+              <button class="refresh-btn" onclick="location.reload()">🔄 Atualizar Agora</button>
+            </div>
+          </body>
+          </html>
+        `);
+      }
+
+      // Gera imagem PNG do QR Code
+      const qrImage = await QRCode.toDataURL(currentQRCode, {
+        width: 400,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+
+      // Exibe QR Code
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>${BOT_NAME} - QR Code</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              margin: 0;
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            }
+            .container {
+              background: white;
+              padding: 40px;
+              border-radius: 20px;
+              box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+              text-align: center;
+              max-width: 500px;
+            }
+            h1 { color: #25D366; margin-bottom: 10px; }
+            .subtitle { color: #666; margin-bottom: 30px; }
+            img { 
+              border: 3px solid #25D366;
+              border-radius: 15px;
+              margin: 20px 0;
+            }
+            .instructions {
+              background: #f8f9fa;
+              padding: 20px;
+              border-radius: 10px;
+              margin-top: 20px;
+              text-align: left;
+            }
+            .instructions ol {
+              margin: 10px 0;
+              padding-left: 20px;
+            }
+            .instructions li {
+              margin: 8px 0;
+              color: #444;
+            }
+            .timer {
+              color: #ff6b6b;
+              font-weight: bold;
+              font-size: 18px;
+              margin-top: 15px;
+            }
+          </style>
+          <script>
+            let timeLeft = 60;
+            setInterval(() => {
+              timeLeft--;
+              if (timeLeft <= 0) {
+                location.reload();
+              }
+              document.getElementById('timer').textContent = timeLeft;
+            }, 1000);
+            
+            // Auto-refresh para detectar conexão
+            setInterval(() => location.reload(), 5000);
+          </script>
+        </head>
+        <body>
+          <div class="container">
+            <h1>📱 Escaneie o QR Code</h1>
+            <p class="subtitle">${BOT_NAME}</p>
+            
+            <img src="${qrImage}" alt="QR Code WhatsApp" />
+            
+            <div class="instructions">
+              <strong>📋 Como conectar:</strong>
+              <ol>
+                <li>Abra o <strong>WhatsApp</strong> no seu celular</li>
+                <li>Toque em <strong>Menu (⋮)</strong> > <strong>Aparelhos conectados</strong></li>
+                <li>Toque em <strong>Conectar um aparelho</strong></li>
+                <li>Aponte a câmera para este QR Code</li>
+              </ol>
+            </div>
+            
+            <p class="timer">⏱️ Expira em: <span id="timer">60</span> segundos</p>
+            <p style="color: #999; font-size: 12px; margin-top: 15px;">
+              Página atualiza automaticamente a cada 5 segundos
+            </p>
+          </div>
+        </body>
+        </html>
+      `);
+
+    } catch (error) {
+      log('ERROR', `❌ Erro no endpoint /qr: ${error.message}`);
+      res.status(500).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>Erro</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              margin: 0;
+              background: #f5f5f5;
+            }
+            .error {
+              background: white;
+              padding: 40px;
+              border-radius: 10px;
+              text-align: center;
+              box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }
+            h1 { color: #ff6b6b; }
+          </style>
+        </head>
+        <body>
+          <div class="error">
+            <h1>❌ Erro</h1>
+            <p>Não foi possível gerar o QR Code.</p>
+            <p><small>${error.message}</small></p>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+  });
   
   app.get('/health', (req, res) => {
     res.status(200).json({
@@ -104,7 +360,8 @@ function setupHealthServer() {
       whatsapp: { 
         connected: !!(globalSock && globalSock.user),
         authenticated: !!(globalSock && globalSock.user),
-        consecutive440: consecutive440Errors
+        consecutive440: consecutive440Errors,
+        qrCodeAvailable: !!currentQRCode
       },
       uptime: Math.floor(process.uptime()),
       messages: {
@@ -116,11 +373,14 @@ function setupHealthServer() {
   });
   
   app.get('/', (req, res) => {
-    res.send(`<h1>${BOT_NAME}</h1><p>Status: ${globalSock && globalSock.user ? '✅ Online' : '🔴 Offline'}</p>`);
+    const status = globalSock && globalSock.user ? '✅ Online' : '🔴 Offline';
+    const qrLink = (!globalSock || !globalSock.user) ? '<br><a href="/qr" style="color: #25D366; text-decoration: none; font-weight: bold;">📱 Ver QR Code</a>' : '';
+    res.send(`<h1>${BOT_NAME}</h1><p>Status: ${status}</p>${qrLink}`);
   });
   
   httpServer = app.listen(PORT, '0.0.0.0', () => {
     log('SUCCESS', `🌍 Servidor na porta ${PORT}`);
+    log('INFO', `📱 QR Code disponível em: http://localhost:${PORT}/qr`);
   });
   
   return httpServer;
@@ -140,207 +400,6 @@ function initializeOnce() {
   
   setupConsoleCommands();
   isInitialized = true;
-}
-async function useMongoDBAuthState(collection) {
-  const readCreds = async () => {
-    const data = await collection.findOne({ _id: 'creds' });
-    return data ? JSON.parse(JSON.stringify(data.value), BufferJSON.reviver) : null;
-  };
-
-  const readKey = async (id) => {
-    const data = await collection.findOne({ _id: id });
-    return data ? JSON.parse(JSON.stringify(data.value), BufferJSON.reviver) : null;
-  };
-
-  const writeData = async (id, value) => {
-    const data = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
-    await collection.updateOne({ _id: id }, { $set: { value: data } }, { upsert: true });
-  };
-
-  const removeData = async (id) => {
-    await collection.deleteOne({ _id: id });
-  };
-
-  let creds = await readCreds();
-  if (!creds) {
-    creds = initAuthCreds();
-    await writeData('creds', creds);
-  }
-
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const data = {};
-          for (const id of ids) {
-            const value = await readKey(`${type}-${id}`);
-            if (value) data[id] = value;
-          }
-          return data;
-        },
-        set: async (data) => {
-          for (const category in data) {
-            for (const id in data[category]) {
-              const value = data[category][id];
-              const key = `${category}-${id}`;
-              if (value) {
-                await writeData(key, value);
-              } else {
-                await removeData(key);
-              }
-            }
-          }
-        }
-      }
-    },
-    saveCreds: async () => await writeData('creds', creds),
-    clearAll: async () => await collection.deleteMany({})
-  };
-}
-
-async function getMessageFromDB(key) {
-  try {
-    if (!mongoClient) return undefined;
-    
-    const db = mongoClient.db('baileys_auth');
-    const messagesCollection = db.collection('messages');
-    const message = await messagesCollection.findOne({ 'key.id': key.id });
-    
-    return message?.message || undefined;
-  } catch (error) {
-    return undefined;
-  }
-}
-
-async function saveMessageToDB(message) {
-  try {
-    if (!mongoClient || !message?.key?.id) return;
-    
-    const db = mongoClient.db('baileys_auth');
-    const messagesCollection = db.collection('messages');
-    
-    await messagesCollection.updateOne(
-      { 'key.id': message.key.id },
-      { $set: message },
-      { upsert: true }
-    );
-  } catch (error) {
-    // Silencioso
-  }
-}
-
-function startPeriodicTasks() {
-  if (cleanupInterval) clearInterval(cleanupInterval);
-  
-  cleanupInterval = setInterval(async () => {
-    try {
-      await cleanExpiredBlocks();
-      
-      if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
-        const excess = processedMessages.size - MESSAGE_CACHE_LIMIT;
-        const iterator = processedMessages.values();
-        for (let i = 0; i < excess; i++) {
-          const { value } = iterator.next();
-          if (value) processedMessages.delete(value);
-        }
-      }
-    } catch (error) {
-      log('WARNING', `⚠️ Erro no cleanup: ${error.message}`);
-    }
-  }, 5 * 60 * 1000);
-  
-  log('SUCCESS', '✅ Tarefas periódicas iniciadas');
-}
-
-function destroySocket() {
-  if (globalSock) {
-    try {
-      globalSock.ev.removeAllListeners();
-      globalSock.ws?.removeAllListeners?.();
-      globalSock.ws?.terminate?.();
-      globalSock.end?.();
-    } catch (e) { /* ignore */ }
-    globalSock = null;
-  }
-}
-
-async function fetchBaileysVersionWithTimeout() {
-  try {
-    log('INFO', '📡 Buscando versão mais recente do Baileys...');
-    
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Timeout ao buscar versão')), FETCH_VERSION_TIMEOUT)
-    );
-    
-    const versionPromise = fetchLatestBaileysVersion();
-    
-    const { version } = await Promise.race([versionPromise, timeoutPromise]);
-    
-    log('SUCCESS', `✅ Versão obtida: ${version.join('.')}`);
-    return version;
-    
-  } catch (error) {
-    log('WARNING', `⚠️ Erro ao buscar versão: ${error.message}`);
-    log('INFO', '📦 Usando versão fallback mais recente conhecida');
-    
-    return [2, 3000, 1019826820];
-  }
-}
-
-function logMessageStats() {
-  const now = Date.now();
-  if (now - lastStatsLog < 30000) return;
-  
-  lastStatsLog = now;
-  const diff = totalMessagesReceived - totalMessagesProcessed;
-  
-  if (totalMessagesReceived > 0) {
-    log('INFO', `📊 Stats: Recebidas=${totalMessagesReceived} | Processadas=${totalMessagesProcessed} | Filtradas=${diff} | Cache=${processedMessages.size}`);
-  }
-}
-
-// 🔥 NOVA FUNÇÃO: Valida se é mensagem real de usuário
-function isRealUserMessage(message) {
-  try {
-    if (!message?.message) return false;
-    
-    // Rejeita mensagens de protocolo
-    const protocolTypes = [
-      'protocolMessage',
-      'senderKeyDistributionMessage', 
-      'messageContextInfo'
-    ];
-    
-    if (protocolTypes.some(type => message.message[type])) {
-      return false;
-    }
-    
-    // Aceita apenas tipos válidos
-    const validTypes = [
-      'conversation',
-      'extendedTextMessage',
-      'imageMessage',
-      'videoMessage',
-      'documentMessage',
-      'audioMessage'
-    ];
-    
-    return validTypes.some(type => message.message[type]);
-    
-  } catch (error) {
-    return false;
-  }
-}
-
-// 🔥 NOVA FUNÇÃO: Verifica se mensagem é recente
-function isRecentMessage(message) {
-  try {
-    const msgTime = (message.messageTimestamp || 0) * 1000;
-    return msgTime >= BOT_START_TIME;
-  } catch (error) {
-    return false;
-  }
 }
 async function connectWhatsApp() {
   if (isConnecting) {
@@ -391,7 +450,6 @@ async function connectWhatsApp() {
     
     const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
 
-    // 🔥 CONFIGURAÇÃO CORRETA DO BAILEYS
     const sock = makeWASocket({
       version,
       logger: pino({ level: 'silent' }),
@@ -404,11 +462,10 @@ async function connectWhatsApp() {
       getMessage: getMessageFromDB,
       msgRetryCounterCache,
       
-      // ✅ CONFIGURAÇÃO CORRETA: Permite sync inicial com filtro inteligente
       syncFullHistory: true,
       shouldSyncHistoryMessage: (msg) => {
         const msgTime = (msg.messageTimestamp || 0) * 1000;
-        return msgTime >= BOT_START_TIME; // Só aceita mensagens após boot
+        return msgTime >= BOT_START_TIME;
       },
       
       connectTimeoutMs: CONNECT_TIMEOUT,
@@ -431,11 +488,19 @@ async function connectWhatsApp() {
         log('INFO', '📱 QR Code recebido!');
         consecutive440Errors = 0;
         
+        // 🔥 SALVA QR Code para endpoint
+        currentQRCode = qr;
+        qrCodeTimestamp = Date.now();
+        
         console.log('\n📱 ┌────────────────────────────────────────────┐');
-        console.log('📱 ESCANEIE O QR CODE ABAIXO EM 60 SEGUNDOS');
+        console.log('📱 QR CODE DISPONÍVEL NO NAVEGADOR');
         console.log('📱 └────────────────────────────────────────────┘\n');
-        qrcode.generate(qr, { small: true });
-        console.log('\n📱 └────────────────────────────────────────────┘\n');
+        console.log(`🌐 Acesse: http://localhost:${PORT}/qr`);
+        console.log(`🌐 Ou: https://whatsapp-bot-stream.onrender.com/qr\n`);
+        console.log('⏱️  Expira em 60 segundos');
+        console.log('🔄 Página atualiza automaticamente\n');
+        console.log('📱 └────────────────────────────────────────────┘\n');
+        
         return;
       }
 
@@ -494,7 +559,7 @@ async function connectWhatsApp() {
           destroySocket();
           isConnecting = false;
           
-          log('INFO', '⏸️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
+          log('INFO', '⸱️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
           log('INFO', '💡 Dica: Certifique-se de que a versão do Baileys está atualizada');
           
           return;
@@ -544,8 +609,13 @@ async function connectWhatsApp() {
         
         return;
       }
+
       if (connection === 'open') {
         isConnecting = false;
+        
+        // 🔥 LIMPA QR Code após conexão bem-sucedida
+        currentQRCode = null;
+        qrCodeTimestamp = null;
         
         if (sock.user) {
           reconnectAttempts = 0;
@@ -574,7 +644,6 @@ async function connectWhatsApp() {
       }
     });
 
-    // 🔥 EVENT LISTENER SIMPLIFICADO E OTIMIZADO
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       
@@ -584,20 +653,17 @@ async function connectWhatsApp() {
         try {
           totalMessagesReceived++;
           
-          // ✅ FILTRO 1: Apenas mensagens reais de usuário
           if (!isRealUserMessage(message)) {
             continue;
           }
 
-          // ✅ FILTRO 2: Apenas mensagens recentes (após boot)
           if (!isRecentMessage(message)) {
-            log('INFO', '⏭️ Mensagem antiga ignorada (anterior ao boot)');
+            log('INFO', '⭕ Mensagem antiga ignorada (anterior ao boot)');
             continue;
           }
 
           const messageId = message.key.id;
 
-          // ✅ FILTRO 3: Verifica duplicatas
           if (processedMessages.has(messageId)) {
             continue;
           }
@@ -637,7 +703,6 @@ async function connectWhatsApp() {
     return null;
   }
 }
-
 function setupConsoleCommands() {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -727,6 +792,7 @@ function setupConsoleCommands() {
     }
   });
 }
+
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
     log('WARNING', `⚠️ Rejection: ${err?.message}`);
@@ -807,9 +873,9 @@ async function startBot() {
   }
 }
 
-console.log('\n🤖 ╔═══════════════════════════════════════════════════╗');
+console.log('\n🤖 ╔═══════════════════════════════════════════════════════╗');
 console.log('🤖 INICIANDO CHAT BOT WHATSAPP - STREAM STUDIO');
 console.log('🤖 Versão otimizada com filtros inteligentes');
-console.log('🤖 ╚═══════════════════════════════════════════════════╝\n');
+console.log('🤖 ╚═══════════════════════════════════════════════════════╝\n');
 
 startBot();
