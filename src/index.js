@@ -38,7 +38,8 @@ const CONNECT_TIMEOUT = parseInt(process.env.CONNECT_TIMEOUT) || 120000;
 const QUERY_TIMEOUT = parseInt(process.env.QUERY_TIMEOUT) || 120000;
 const KEEPALIVE_INTERVAL = parseInt(process.env.KEEPALIVE_INTERVAL) || 60000;
 
-const POST_AUTH_STABILIZATION_TIME = 10000;
+// 🔥 CORREÇÃO: Período de estabilização aumentado de 10s para 60s
+const POST_AUTH_STABILIZATION_TIME = 60000; // Era 10000
 const MAX_440_BEFORE_CLEAR = 3;
 const FETCH_VERSION_TIMEOUT = 10000;
 
@@ -56,7 +57,7 @@ let isStabilizing = false;
 let stabilizationTimeout = null;
 let lastSuccessfulAuth = 0;
 
-// 📊 NOVO: Contadores para diagnóstico
+// 📊 Contadores para diagnóstico
 let totalMessagesReceived = 0;
 let totalMessagesProcessed = 0;
 let lastStatsLog = 0;
@@ -95,7 +96,6 @@ function showBanner() {
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `🌐 Platform: ${process.env.RENDER ? 'Render' : process.env.FLY_APP_NAME ? 'Fly.io' : 'Local'}\n`);
 }
-
 function setupHealthServer() {
   if (httpServer) return httpServer;
 
@@ -145,6 +145,7 @@ function initializeOnce() {
   setupConsoleCommands();
   isInitialized = true;
 }
+
 async function useMongoDBAuthState(collection) {
   const readCreds = async () => {
     const data = await collection.findOne({ _id: 'creds' });
@@ -203,7 +204,6 @@ async function useMongoDBAuthState(collection) {
   };
 }
 
-// 🔥 CORREÇÃO CRÍTICA: getMessage agora retorna undefined quando não há mensagem
 async function getMessageFromDB(key) {
   try {
     if (!mongoClient) return undefined;
@@ -279,7 +279,6 @@ function destroySocket() {
     stabilizationTimeout = null;
   }
 }
-
 function startStabilizationPeriod() {
   isStabilizing = true;
   lastSuccessfulAuth = Date.now();
@@ -288,9 +287,10 @@ function startStabilizationPeriod() {
     clearTimeout(stabilizationTimeout);
   }
   
-  // 🔍 NOVO: Log detalhado do início da estabilização
+  // 🔥 CORREÇÃO: Log atualizado com novo tempo de estabilização (60s)
   log('INFO', `⏳ Iniciando período de estabilização (${POST_AUTH_STABILIZATION_TIME/1000}s)...`);
   log('INFO', `🕐 Timestamp de autenticação: ${new Date(lastSuccessfulAuth).toLocaleTimeString()}`);
+  log('WARNING', '🚫 MENSAGENS IGNORADAS durante estabilização (aguarde sync de histórico finalizar)');
   
   stabilizationTimeout = setTimeout(() => {
     isStabilizing = false;
@@ -335,10 +335,9 @@ async function fetchBaileysVersionWithTimeout() {
   }
 }
 
-// 📊 NOVA FUNÇÃO: Estatísticas de mensagens
 function logMessageStats() {
   const now = Date.now();
-  if (now - lastStatsLog < 30000) return; // Log a cada 30s no máximo
+  if (now - lastStatsLog < 30000) return;
   
   lastStatsLog = now;
   const diff = totalMessagesReceived - totalMessagesProcessed;
@@ -349,6 +348,70 @@ function logMessageStats() {
     if (diff > 5) {
       log('WARNING', `⚠️ ALERTA: ${diff} mensagens foram bloqueadas/rejeitadas!`);
     }
+  }
+}
+
+// 🔥 NOVA FUNÇÃO: Detecta se mensagem é de sincronização de histórico
+function isHistorySyncMessage(message) {
+  try {
+    if (!message?.message) return false;
+    
+    // Tipos de mensagens de protocolo que devem ser ignoradas
+    const protocolTypes = [
+      'protocolMessage',
+      'senderKeyDistributionMessage', 
+      'messageContextInfo'
+    ];
+    
+    // Verifica se tem algum tipo de protocolo
+    const hasProtocolMessage = protocolTypes.some(type => message.message[type]);
+    
+    if (hasProtocolMessage) {
+      const protocolType = message.message.protocolMessage?.type;
+      if (protocolType) {
+        log('INFO', `🔄 Mensagem de protocolo detectada: ${protocolType} - IGNORADA`);
+      }
+      return true;
+    }
+    
+    return false;
+    
+  } catch (error) {
+    return false;
+  }
+}
+
+// 🔥 NOVA FUNÇÃO: Valida se é mensagem real de usuário
+function isRealUserMessage(message) {
+  try {
+    if (!message?.message) return false;
+    
+    // 🔥 FILTRO 1: Rejeita mensagens de protocolo
+    if (isHistorySyncMessage(message)) {
+      return false;
+    }
+    
+    // 🔥 FILTRO 2: Aceita apenas tipos válidos
+    const validTypes = [
+      'conversation',
+      'extendedTextMessage',
+      'imageMessage',
+      'videoMessage',
+      'documentMessage',
+      'audioMessage'
+    ];
+    
+    const hasValidType = validTypes.some(type => message.message[type]);
+    
+    if (!hasValidType) {
+      log('INFO', '⚠️ Mensagem sem tipo válido - IGNORADA');
+      return false;
+    }
+    
+    return true;
+    
+  } catch (error) {
+    return false;
   }
 }
 async function connectWhatsApp() {
@@ -405,6 +468,7 @@ async function connectWhatsApp() {
     
     const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
 
+    // 🔥 CORREÇÃO: syncFullHistory desabilitado + configurações otimizadas
     const sock = makeWASocket({
       version,
       logger: pino({ level: 'silent' }),
@@ -420,10 +484,17 @@ async function connectWhatsApp() {
       defaultQueryTimeoutMs: QUERY_TIMEOUT,
       keepAliveIntervalMs: KEEPALIVE_INTERVAL,
       emitOwnEvents: true,
-      syncFullHistory: true,
+      
+      // 🔥 CORREÇÃO CRÍTICA: Desabilita sincronização de histórico completo
+      syncFullHistory: false,
+      
       retryRequestDelayMs: 2000,
       fireInitQueries: true,
-      printQRInTerminal: false
+      printQRInTerminal: false,
+      
+      // 🔥 NOVO: Configurações adicionais para evitar sync massivo
+      shouldSyncHistoryMessage: () => false, // Nunca sincroniza histórico
+      patchMessageBeforeSending: (message) => message // Não modifica mensagens
     });
 
     globalSock = sock;
@@ -501,7 +572,7 @@ async function connectWhatsApp() {
           destroySocket();
           isConnecting = false;
           
-          log('INFO', '⏸️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
+          log('INFO', '⸱️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
           log('INFO', '💡 Dica: Certifique-se de que a versão do Baileys está atualizada');
           
           return;
@@ -602,55 +673,56 @@ async function connectWhatsApp() {
       }
     });
 
-    // 🔍 NOVO EVENT LISTENER COM LOGS DETALHADOS
+    // 🔥 EVENT LISTENER COM FILTROS AGRESSIVOS
     sock.ev.on('messages.upsert', async (m) => {
       const { messages, type } = m;
       
-      // 🔍 Log 1: Mensagens recebidas
       log('INFO', `📥 Event 'messages.upsert' disparado | Tipo: ${type} | Quantidade: ${messages.length}`);
       
       if (type !== 'notify') {
-        log('INFO', `⏭️ Tipo '${type}' ignorado (não é 'notify')`);
+        log('INFO', `⭕ Tipo '${type}' ignorado (não é 'notify')`);
         return;
       }
 
-      // 🔍 Log 2: Informações sobre estabilização
+      // 🔥 FILTRO CRÍTICO 1: Ignora TODAS mensagens durante estabilização
       if (isStabilizing) {
         const timeSinceAuth = Date.now() - lastSuccessfulAuth;
-        log('INFO', `⏳ Bot em estabilização (${Math.round(timeSinceAuth/1000)}s desde auth)`);
+        log('WARNING', `🚫 MENSAGENS IGNORADAS - Bot em estabilização (${Math.round(timeSinceAuth/1000)}s/${POST_AUTH_STABILIZATION_TIME/1000}s)`);
+        return; // IMPORTANTE: Retorna imediatamente
       }
 
-      // 🔍 Log 3: Processar cada mensagem
       for (const message of messages) {
         try {
           totalMessagesReceived++;
           
-          // 🔍 Log 4: Info básica da mensagem
           const from = message.key.remoteJid;
           const messageId = message.key.id;
-          const hasContent = !!message.message;
           
-          log('INFO', `📨 Mensagem #${totalMessagesReceived} | De: ${from} | ID: ${messageId} | Conteúdo: ${hasContent ? 'SIM' : 'NÃO'}`);
+          log('INFO', `📨 Mensagem #${totalMessagesReceived} | De: ${from} | ID: ${messageId}`);
+
+          // 🔥 FILTRO CRÍTICO 2: Rejeita mensagens de sync/protocolo
+          if (!isRealUserMessage(message)) {
+            log('WARNING', `🚫 Mensagem #${totalMessagesReceived} de SYNC/PROTOCOLO - IGNORADA`);
+            continue;
+          }
 
           if (!message.message) {
             log('WARNING', `⚠️ Mensagem #${totalMessagesReceived} sem conteúdo - IGNORADA`);
             continue;
           }
 
-          // 🔍 Log 5: Verificar se é duplicada
+          // 🔥 FILTRO CRÍTICO 3: Verifica duplicatas
           if (processedMessages.has(messageId)) {
             log('INFO', `🔄 Mensagem #${totalMessagesReceived} DUPLICADA (ID: ${messageId}) - IGNORADA`);
             continue;
           }
           
-          // 🔍 Log 6: Adicionar ao cache e salvar
           processedMessages.add(messageId);
           log('INFO', `💾 Mensagem #${totalMessagesReceived} adicionada ao cache (total: ${processedMessages.size})`);
           
           await saveMessageToDB(message);
           log('INFO', `💿 Mensagem #${totalMessagesReceived} salva no MongoDB`);
           
-          // 🔍 Log 7: ANTES de chamar processMessage
           log('INFO', `🚀 Chamando processMessage() para mensagem #${totalMessagesReceived}...`);
           
           await processMessage(sock, message);
@@ -658,7 +730,6 @@ async function connectWhatsApp() {
           totalMessagesProcessed++;
           log('SUCCESS', `✅ Mensagem #${totalMessagesReceived} PROCESSADA COM SUCESSO (total processadas: ${totalMessagesProcessed})`);
           
-          // 🔍 Log 8: Stats a cada 10 mensagens
           if (totalMessagesReceived % 10 === 0) {
             logMessageStats();
           }
@@ -672,7 +743,6 @@ async function connectWhatsApp() {
         }
       }
       
-      // 🔍 Log 9: Resumo do batch
       log('INFO', `✅ Batch processado | Total recebidas: ${totalMessagesReceived} | Total processadas: ${totalMessagesProcessed}`);
     });
 
@@ -708,7 +778,7 @@ function setupConsoleCommands() {
     switch (command) {
       case 'stats':
         showStats();
-        logMessageStats(); // 🔍 NOVO: mostrar stats de mensagens
+        logMessageStats();
         break;
       case 'blocked':
         listBlockedUsers();
@@ -729,8 +799,8 @@ function setupConsoleCommands() {
         consecutive440Errors = 0;
         isStabilizing = false;
         totalReconnectAttempts = 0;
-        totalMessagesReceived = 0; // 🔍 NOVO
-        totalMessagesProcessed = 0; // 🔍 NOVO
+        totalMessagesReceived = 0;
+        totalMessagesProcessed = 0;
         log('SUCCESS', '✅ Contadores resetados');
         break;
       case 'clearsession':
@@ -756,13 +826,12 @@ function setupConsoleCommands() {
         console.log(`   Estabilizando: ${isStabilizing}`);
         console.log(`   Erros 440: ${consecutive440Errors}`);
         console.log(`   Reconexões: ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
-        console.log(`   Msgs Recebidas: ${totalMessagesReceived}`); // 🔍 NOVO
-        console.log(`   Msgs Processadas: ${totalMessagesProcessed}`); // 🔍 NOVO
-        console.log(`   Msgs Bloqueadas: ${totalMessagesReceived - totalMessagesProcessed}`); // 🔍 NOVO
-        console.log(`   Cache: ${processedMessages.size}\n`); // 🔍 NOVO
+        console.log(`   Msgs Recebidas: ${totalMessagesReceived}`);
+        console.log(`   Msgs Processadas: ${totalMessagesProcessed}`);
+        console.log(`   Msgs Bloqueadas: ${totalMessagesReceived - totalMessagesProcessed}`);
+        console.log(`   Cache: ${processedMessages.size}\n`);
         break;
       case 'msgstats':
-        // 🔍 NOVO COMANDO
         logMessageStats();
         break;
       case 'help':
@@ -774,7 +843,7 @@ function setupConsoleCommands() {
         console.log('   reset        - Reset contadores');
         console.log('   clearsession - Limpar sessão');
         console.log('   status       - Status atual');
-        console.log('   msgstats     - Stats de mensagens'); // 🔍 NOVO
+        console.log('   msgstats     - Stats de mensagens');
         console.log('   help         - Ajuda');
         console.log('   clear        - Limpar tela\n');
         break;
@@ -789,6 +858,7 @@ function setupConsoleCommands() {
     }
   });
 }
+
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
     log('WARNING', `⚠️ Rejection: ${err?.message}`);
@@ -812,7 +882,6 @@ process.on('uncaughtException', (err) => {
 const shutdown = async () => {
   console.log('\n\n👋 Encerrando bot...');
   
-  // 🔍 NOVO: Log final de estatísticas
   log('INFO', `📊 Estatísticas finais:`);
   log('INFO', `   📥 Mensagens recebidas: ${totalMessagesReceived}`);
   log('INFO', `   ✅ Mensagens processadas: ${totalMessagesProcessed}`);
@@ -880,10 +949,9 @@ async function startBot() {
   }
 }
 
-// 🔍 NOVO: Log de inicialização
-console.log('\n🤖 ════════════════════════════════════════════════════════');
+console.log('\n🤖 ╔═══════════════════════════════════════════════════╗');
 console.log('🤖 INICIANDO CHAT BOT WHATSAPP - STREAM STUDIO');
-console.log('🤖 Versão com diagnóstico detalhado de mensagens');
-console.log('🤖 ════════════════════════════════════════════════════════\n');
+console.log('🤖 Versão com filtros anti-sync otimizada');
+console.log('🤖 ╚═══════════════════════════════════════════════════╝\n');
 
 startBot();
