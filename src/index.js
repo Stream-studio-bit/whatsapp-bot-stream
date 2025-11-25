@@ -1,7 +1,6 @@
 import makeWASocket, { 
   DisconnectReason, 
   useMultiFileAuthState,
-  makeInMemoryStore,
   fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -55,9 +54,9 @@ const BOT_START_TIME = Date.now();
 
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m╔════════════════════════════════════════╗\x1b[0m');
+  console.log('\x1b[36m╔═══════════════════════════════════════╗\x1b[0m');
   console.log('\x1b[36m║   🤖 WHATSAPP BOT - STREAM STUDIO 🤖  ║\x1b[0m');
-  console.log('\x1b[36m╚════════════════════════════════════════╝\x1b[0m\n');
+  console.log('\x1b[36m╚═══════════════════════════════════════╝\x1b[0m\n');
   console.log(`📱 Bot: ${CONFIG.botName}`);
   console.log(`👤 Owner: ${CONFIG.ownerName}`);
   console.log(`🌐 Platform: ${process.env.RENDER ? 'Render' : 'Local'}\n`);
@@ -553,8 +552,8 @@ async function start() {
 // INICIA O BOT
 // ==========================================
 
-console.log('\n🤖 ╔══════════════════════════════════════╗');
-console.log('🤖 │ INICIANDO WHATSAPP BOT              │');
-console.log('🤖 ╚══════════════════════════════════════╝\n');
+console.log('\n🤖 ╔═══════════════════════════════════╗');
+console.log('🤖 ║ INICIANDO WHATSAPP BOT              ║');
+console.log('🤖 ╚═══════════════════════════════════╝\n');
 
 start();
