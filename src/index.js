@@ -1,7 +1,8 @@
 import makeWASocket, { 
   DisconnectReason, 
   useMultiFileAuthState,
-  fetchLatestBaileysVersion
+  fetchLatestBaileysVersion,
+  initAuthCreds
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -97,7 +98,7 @@ async function useMongoDBAuthState(collection) {
     log('SUCCESS', '✅ Sessão limpa');
   };
 
-  const creds = await readData('creds') || makeWASocket.initAuthCreds();
+  const creds = await readData('creds') || initAuthCreds();
 
   return {
     state: {
