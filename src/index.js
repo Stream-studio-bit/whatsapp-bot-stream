@@ -43,7 +43,7 @@ const FETCH_VERSION_TIMEOUT = 10000;
 // 🔥 Timestamp de inicialização do bot
 const BOT_START_TIME = Date.now();
 
-// 🔥 NOVO: Armazenamento do QR Code
+// 🔥 Armazenamento do QR Code
 let currentQRCode = null;
 let qrCodeTimestamp = null;
 const QR_CODE_TIMEOUT = 60000; // 60 segundos
@@ -69,6 +69,10 @@ const MESSAGE_CACHE_LIMIT = 1000;
 
 let cleanupInterval = null;
 
+// =========================================
+// FUNÇÕES AUXILIARES
+// =========================================
+
 function getReconnectDelay(attempt) {
   const delay = Math.min(
     INITIAL_RECONNECT_DELAY * Math.pow(2, attempt),
@@ -89,20 +93,232 @@ function scheduleReconnectReset() {
 
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m%s\x1b[0m', '╔═══════════════════════════════════════════════════════╗');
+  console.log('\x1b[36m%s\x1b[0m', '╔══════════════════════════════════════════════════════╗');
   console.log('\x1b[36m%s\x1b[0m', '║           🤖  CHAT BOT WHATSAPP - STREAM STUDIO  🤖          ║');
   console.log('\x1b[36m%s\x1b[0m', '║                    Bot Multi-tarefas com IA                  ║');
-  console.log('\x1b[36m%s\x1b[0m', '╚═══════════════════════════════════════════════════════╝\n');
+  console.log('\x1b[36m%s\x1b[0m', '╚══════════════════════════════════════════════════════╝\n');
   console.log('\x1b[33m%s\x1b[0m', `📱 Bot: ${BOT_NAME}`);
   console.log('\x1b[33m%s\x1b[0m', `👤 Owner: ${OWNER_NAME}`);
-  console.log('\x1b[33m%s\x1b[0m', `🌍 Platform: ${process.env.RENDER ? 'Render' : process.env.FLY_APP_NAME ? 'Fly.io' : 'Local'}\n`);
+  console.log('\x1b[33m%s\x1b[0m', `🌐 Platform: ${process.env.RENDER ? 'Render' : process.env.FLY_APP_NAME ? 'Fly.io' : 'Local'}\n`);
 }
+
+// 🔥 FUNÇÃO CRÍTICA: Destruir socket
+function destroySocket() {
+  if (globalSock) {
+    try {
+      globalSock.ev.removeAllListeners();
+      globalSock.ws.close();
+    } catch (e) {
+      // Ignora erros na destruição
+    }
+    globalSock = null;
+  }
+}
+
+// 🔥 FUNÇÃO: Buscar versão do Baileys com timeout
+async function fetchBaileysVersionWithTimeout() {
+  return Promise.race([
+    fetchLatestBaileysVersion(),
+    new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Timeout ao buscar versão')), FETCH_VERSION_TIMEOUT)
+    )
+  ]);
+}
+// =========================================
+// AUTENTICAÇÃO MONGODB
+// =========================================
+
+async function useMongoDBAuthState(collection) {
+  const writeData = async (data, id) => {
+    try {
+      await collection.replaceOne(
+        { _id: id },
+        JSON.parse(JSON.stringify(data, BufferJSON.replacer)),
+        { upsert: true }
+      );
+    } catch (error) {
+      log('ERROR', `❌ Erro ao salvar dado ${id}: ${error.message}`);
+    }
+  };
+
+  const readData = async (id) => {
+    try {
+      const data = await collection.findOne({ _id: id });
+      if (!data) return null;
+      return JSON.parse(JSON.stringify(data), BufferJSON.reviver);
+    } catch (error) {
+      log('ERROR', `❌ Erro ao ler dado ${id}: ${error.message}`);
+      return null;
+    }
+  };
+
+  const removeData = async (id) => {
+    try {
+      await collection.deleteOne({ _id: id });
+    } catch (error) {
+      log('ERROR', `❌ Erro ao remover dado ${id}: ${error.message}`);
+    }
+  };
+
+  const clearAll = async () => {
+    try {
+      await collection.deleteMany({});
+      log('SUCCESS', '✅ Todas as credenciais foram limpas');
+    } catch (error) {
+      log('ERROR', `❌ Erro ao limpar credenciais: ${error.message}`);
+    }
+  };
+
+  const creds = (await readData('creds')) || initAuthCreds();
+  
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          await Promise.all(
+            ids.map(async (id) => {
+              let value = await readData(`${type}-${id}`);
+              if (type === 'app-state-sync-key' && value) {
+                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+              }
+              data[id] = value;
+            })
+          );
+          return data;
+        },
+        set: async (data) => {
+          const tasks = [];
+          for (const category in data) {
+            for (const id in data[category]) {
+              const value = data[category][id];
+              const key = `${category}-${id}`;
+              tasks.push(value ? writeData(value, key) : removeData(key));
+            }
+          }
+          await Promise.all(tasks);
+        }
+      }
+    },
+    saveCreds: () => writeData(creds, 'creds'),
+    clearAll
+  };
+}
+
+// =========================================
+// GERENCIAMENTO DE MENSAGENS
+// =========================================
+
+async function getMessageFromDB(key) {
+  if (!mongoClient) return null;
+  try {
+    const db = mongoClient.db('baileys_auth');
+    const messagesCollection = db.collection('messages');
+    const message = await messagesCollection.findOne({ 
+      'key.id': key.id,
+      'key.remoteJid': key.remoteJid 
+    });
+    return message || null;
+  } catch (error) {
+    log('ERROR', `❌ Erro ao buscar mensagem: ${error.message}`);
+    return null;
+  }
+}
+
+async function saveMessageToDB(message) {
+  if (!mongoClient) return;
+  try {
+    const db = mongoClient.db('baileys_auth');
+    const messagesCollection = db.collection('messages');
+    await messagesCollection.updateOne(
+      { 'key.id': message.key.id },
+      { $set: message },
+      { upsert: true }
+    );
+  } catch (error) {
+    log('ERROR', `❌ Erro ao salvar mensagem: ${error.message}`);
+  }
+}
+
+function isRealUserMessage(message) {
+  if (!message || !message.key) return false;
+  
+  // Ignora mensagens do próprio bot
+  if (message.key.fromMe) return false;
+  
+  // Ignora status/broadcasts
+  if (message.key.remoteJid === 'status@broadcast') return false;
+  
+  // Ignora mensagens de sistema
+  if (message.messageStubType) return false;
+  
+  // Ignora se não tem conteúdo
+  if (!message.message) return false;
+  
+  // Ignora reações
+  if (message.message.reactionMessage) return false;
+  
+  // Ignora mensagens de protocolo
+  if (message.message.protocolMessage) return false;
+  
+  return true;
+}
+
+function isRecentMessage(message) {
+  const msgTimestamp = (message.messageTimestamp || 0) * 1000;
+  return msgTimestamp >= BOT_START_TIME;
+}
+
+function logMessageStats() {
+  const now = Date.now();
+  if (now - lastStatsLog < 60000) return; // Log a cada 1 minuto
+  
+  lastStatsLog = now;
+  const filtered = totalMessagesReceived - totalMessagesProcessed;
+  const filterRate = totalMessagesReceived > 0 
+    ? ((filtered / totalMessagesReceived) * 100).toFixed(1)
+    : 0;
+  
+  log('INFO', `📊 Stats: ${totalMessagesProcessed} processadas | ${filtered} filtradas (${filterRate}%) | Cache: ${processedMessages.size}`);
+}
+
+// =========================================
+// TAREFAS PERIÓDICAS
+// =========================================
+
+function startPeriodicTasks() {
+  if (cleanupInterval) return;
+  
+  cleanupInterval = setInterval(() => {
+    // Limpa cache de mensagens processadas
+    if (processedMessages.size > MESSAGE_CACHE_LIMIT) {
+      const toDelete = processedMessages.size - MESSAGE_CACHE_LIMIT;
+      const iterator = processedMessages.values();
+      for (let i = 0; i < toDelete; i++) {
+        const value = iterator.next().value;
+        processedMessages.delete(value);
+      }
+      log('INFO', `🧹 Cache limpo: ${toDelete} mensagens removidas`);
+    }
+    
+    // Limpa bloqueios expirados
+    cleanExpiredBlocks().catch(err => {
+      log('ERROR', `❌ Erro ao limpar bloqueios: ${err.message}`);
+    });
+    
+  }, 300000); // A cada 5 minutos
+}
+// =========================================
+// SERVIDOR HTTP E QR CODE
+// =========================================
+
 function setupHealthServer() {
   if (httpServer) return httpServer;
 
   const app = express();
   
-  // 🔥 NOVO: Endpoint para exibir QR Code
+  // 🔥 Endpoint para exibir QR Code
   app.get('/qr', async (req, res) => {
     try {
       // Verifica se bot já está conectado
@@ -379,7 +595,7 @@ function setupHealthServer() {
   });
   
   httpServer = app.listen(PORT, '0.0.0.0', () => {
-    log('SUCCESS', `🌍 Servidor na porta ${PORT}`);
+    log('SUCCESS', `🌐 Servidor na porta ${PORT}`);
     log('INFO', `📱 QR Code disponível em: http://localhost:${PORT}/qr`);
   });
   
@@ -401,6 +617,10 @@ function initializeOnce() {
   setupConsoleCommands();
   isInitialized = true;
 }
+// =========================================
+// CONEXÃO WHATSAPP
+// =========================================
+
 async function connectWhatsApp() {
   if (isConnecting) {
     log('WARNING', '⚠️ Conexão em andamento...');
@@ -493,7 +713,7 @@ async function connectWhatsApp() {
         qrCodeTimestamp = Date.now();
         
         console.log('\n📱 ┌────────────────────────────────────────────┐');
-        console.log('📱 QR CODE DISPONÍVEL NO NAVEGADOR');
+        console.log('📱 │ QR CODE DISPONÍVEL NO NAVEGADOR           │');
         console.log('📱 └────────────────────────────────────────────┘\n');
         console.log(`🌐 Acesse: http://localhost:${PORT}/qr`);
         console.log(`🌐 Ou: https://whatsapp-bot-stream.onrender.com/qr\n`);
@@ -559,7 +779,7 @@ async function connectWhatsApp() {
           destroySocket();
           isConnecting = false;
           
-          log('INFO', '⸱️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
+          log('INFO', '⏸️ Bot pausado. Reinicie manualmente para gerar novo QR Code.');
           log('INFO', '💡 Dica: Certifique-se de que a versão do Baileys está atualizada');
           
           return;
@@ -622,7 +842,7 @@ async function connectWhatsApp() {
           
           log('SUCCESS', '✅ Conectado E AUTENTICADO ao WhatsApp!');
           console.log('\n🎉 ┌────────────────────────────────────────────┐');
-          console.log('🎉 BOT ONLINE E FUNCIONANDO!');
+          console.log('🎉 │ BOT ONLINE E FUNCIONANDO!                 │');
           console.log('🎉 └────────────────────────────────────────────┘\n');
 
           scheduleReconnectReset();
@@ -658,7 +878,7 @@ async function connectWhatsApp() {
           }
 
           if (!isRecentMessage(message)) {
-            log('INFO', '⭕ Mensagem antiga ignorada (anterior ao boot)');
+            log('INFO', '⏭️ Mensagem antiga ignorada (anterior ao boot)');
             continue;
           }
 
@@ -703,6 +923,10 @@ async function connectWhatsApp() {
     return null;
   }
 }
+// =========================================
+// COMANDOS DO CONSOLE
+// =========================================
+
 function setupConsoleCommands() {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -793,6 +1017,10 @@ function setupConsoleCommands() {
   });
 }
 
+// =========================================
+// TRATAMENTO DE ERROS E SHUTDOWN
+// =========================================
+
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
     log('WARNING', `⚠️ Rejection: ${err?.message}`);
@@ -850,6 +1078,10 @@ const shutdown = async () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+// =========================================
+// INICIALIZAÇÃO DO BOT
+// =========================================
+
 async function startBot() {
   try {
     log('INFO', '🚀 Iniciando bot...');
@@ -873,9 +1105,9 @@ async function startBot() {
   }
 }
 
-console.log('\n🤖 ╔═══════════════════════════════════════════════════════╗');
-console.log('🤖 INICIANDO CHAT BOT WHATSAPP - STREAM STUDIO');
-console.log('🤖 Versão otimizada com filtros inteligentes');
-console.log('🤖 ╚═══════════════════════════════════════════════════════╝\n');
+console.log('\n🤖 ╔══════════════════════════════════════════════════════╗');
+console.log('🤖 │ INICIANDO CHAT BOT WHATSAPP - STREAM STUDIO        │');
+console.log('🤖 │ Versão otimizada com filtros inteligentes          │');
+console.log('🤖 ╚══════════════════════════════════════════════════════╝\n');
 
 startBot();
