@@ -1,8 +1,8 @@
 import makeWASocket, { 
-  DisconnectReason, 
-  useMultiFileAuthState,
+  DisconnectReason,
   fetchLatestBaileysVersion,
-  initAuthCreds
+  initAuthCreds,
+  BufferJSON
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -71,33 +71,49 @@ async function useMongoDBAuthState(collection) {
   const readData = async (key) => {
     try {
       const doc = await collection.findOne({ _id: key });
-      return doc ? JSON.parse(JSON.stringify(doc.value)) : null;
-    } catch { return null; }
+      if (!doc) return null;
+      
+      // Usa BufferJSON.reviver para deserializar corretamente
+      return JSON.parse(JSON.stringify(doc.value), BufferJSON.reviver);
+    } catch (err) {
+      log('ERROR', `Erro ao ler ${key}: ${err.message}`);
+      return null;
+    }
   };
 
   const writeData = async (key, value) => {
     try {
+      // Usa BufferJSON.replacer para serializar corretamente
+      const serialized = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
+      
       await collection.replaceOne(
         { _id: key },
-        { _id: key, value },
+        { _id: key, value: serialized },
         { upsert: true }
       );
     } catch (e) {
-      log('ERROR', `Erro ao salvar: ${e.message}`);
+      log('ERROR', `Erro ao salvar ${key}: ${e.message}`);
     }
   };
 
   const removeData = async (key) => {
     try {
       await collection.deleteOne({ _id: key });
-    } catch {}
+    } catch (err) {
+      log('ERROR', `Erro ao remover ${key}: ${err.message}`);
+    }
   };
 
   const clearAll = async () => {
-    await collection.deleteMany({});
-    log('SUCCESS', '✅ Sessão limpa');
+    try {
+      await collection.deleteMany({});
+      log('SUCCESS', '✅ Sessão limpa');
+    } catch (err) {
+      log('ERROR', `Erro ao limpar sessão: ${err.message}`);
+    }
   };
 
+  // Inicializa credenciais
   const creds = await readData('creds') || initAuthCreds();
 
   return {
@@ -106,21 +122,31 @@ async function useMongoDBAuthState(collection) {
       keys: {
         get: async (type, ids) => {
           const data = {};
-          for (const id of ids) {
-            const val = await readData(`${type}-${id}`);
-            if (val) data[id] = val;
-          }
+          await Promise.all(
+            ids.map(async (id) => {
+              const value = await readData(`${type}-${id}`);
+              if (value) {
+                data[id] = value;
+              }
+            })
+          );
           return data;
         },
         set: async (data) => {
+          const tasks = [];
           for (const category in data) {
             for (const id in data[category]) {
               const value = data[category][id];
               const key = `${category}-${id}`;
-              if (value) await writeData(key, value);
-              else await removeData(key);
+              
+              if (value) {
+                tasks.push(writeData(key, value));
+              } else {
+                tasks.push(removeData(key));
+              }
             }
           }
+          await Promise.all(tasks);
         }
       }
     },
@@ -186,6 +212,7 @@ function setupServer() {
     log('SUCCESS', `🌐 Servidor: http://localhost:${CONFIG.port}`);
   });
 }
+
 // ==========================================
 // GERENCIAMENTO DE MENSAGENS
 // ==========================================
@@ -262,7 +289,7 @@ async function connectWhatsApp() {
     setTimeout(() => {
       reconnectAttempts = 0;
       log('INFO', '🔄 Contadores resetados');
-    }, 15 * 60 * 1000); // 15 minutos
+    }, 15 * 60 * 1000);
     return;
   }
 
@@ -279,12 +306,14 @@ async function connectWhatsApp() {
       log('SUCCESS', '✅ MongoDB conectado');
     }
 
-    // Busca versão do Baileys (com fallback)
+    // Busca versão do Baileys
     let version;
     try {
-      version = await fetchLatestBaileysVersion();
-    } catch {
-      version = [2, 3000, 1015901307]; // Versão estável fixa
+      const versionData = await fetchLatestBaileysVersion();
+      version = versionData.version;
+      log('SUCCESS', `✅ Baileys v${version.join('.')}`);
+    } catch (err) {
+      version = [2, 3000, 1015901307];
       log('WARNING', '⚠️ Usando versão fixa do Baileys');
     }
 
@@ -305,6 +334,7 @@ async function connectWhatsApp() {
       keepAliveIntervalMs: 30000,
       markOnlineOnConnect: true,
       syncFullHistory: false,
+      generateHighQualityLinkPreview: true,
       getMessage: async () => null
     });
 
@@ -330,17 +360,19 @@ async function connectWhatsApp() {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
+        log('WARNING', `⚠️ Desconectado (código: ${statusCode || 'desconhecido'})`);
+
         // Logout
         if (statusCode === DisconnectReason.loggedOut) {
-          log('ERROR', '❌ Logout detectado');
+          log('ERROR', '❌ Logout detectado - limpando sessão');
           await clearAll();
           process.exit(0);
           return;
         }
 
         // Credenciais inválidas
-        if (statusCode === 405) {
-          log('ERROR', '❌ Erro 405: Limpando sessão...');
+        if (statusCode === 401 || statusCode === 405) {
+          log('ERROR', `❌ Erro ${statusCode}: Sessão inválida - limpando...`);
           await clearAll();
           reconnectAttempts = 0;
           isConnecting = false;
@@ -349,7 +381,6 @@ async function connectWhatsApp() {
         }
 
         // Reconecta
-        log('WARNING', `⚠️ Desconectado (${statusCode || 'desconhecido'})`);
         isConnecting = false;
         setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
         return;
@@ -382,7 +413,7 @@ async function connectWhatsApp() {
 
   } catch (error) {
     isConnecting = false;
-    log('ERROR', `❌ Erro: ${error.message}`);
+    log('ERROR', `❌ Erro na conexão: ${error.message}`);
     setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
   }
 }
@@ -401,6 +432,7 @@ function startPeriodicTasks() {
     }
   }, 5 * 60 * 1000);
 }
+
 // ==========================================
 // COMANDOS DO CONSOLE
 // ==========================================
@@ -504,6 +536,7 @@ async function shutdown() {
 
   if (sock) {
     sock.ws?.close();
+    sock = null;
     log('INFO', '✅ Socket destruído');
   }
 
