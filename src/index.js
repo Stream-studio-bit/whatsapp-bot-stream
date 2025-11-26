@@ -242,18 +242,32 @@ function shouldProcessMessage(msg) {
     return false;
   }
   
-  if (msg.key.remoteJid === 'status@broadcast') {
+  const remoteJid = msg.key.remoteJid;
+  
+  if (remoteJid === 'status@broadcast') {
     log('INFO', '⏭️ Status broadcast ignorado');
     return false;
   }
   
-  if (msg.key.remoteJid?.endsWith('@g.us')) {
+  // Ignora grupos
+  if (remoteJid.endsWith('@g.us')) {
     log('INFO', '⏭️ Mensagem de grupo ignorada');
     return false;
   }
   
-  if (!msg.key.remoteJid?.endsWith('@s.whatsapp.net')) {
-    log('WARNING', `❌ RemoteJid inválido: ${msg.key.remoteJid}`);
+  // Ignora newsletters/canais
+  if (remoteJid.endsWith('@newsletter')) {
+    log('INFO', '⏭️ Newsletter ignorado');
+    return false;
+  }
+  
+  // Aceita apenas conversas individuais (@s.whatsapp.net) ou IDs válidos
+  const isValidChat = remoteJid.endsWith('@s.whatsapp.net') || 
+                     remoteJid.endsWith('@lid') ||
+                     /^\d+@s\.whatsapp\.net$/.test(remoteJid);
+  
+  if (!isValidChat) {
+    log('WARNING', `❌ RemoteJid inválido: ${remoteJid}`);
     return false;
   }
   
