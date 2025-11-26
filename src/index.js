@@ -229,17 +229,59 @@ function isRecentMessage(msg) {
 }
 
 function shouldProcessMessage(msg) {
-  if (!msg?.key?.remoteJid) return false;
-  if (msg.key.remoteJid === 'status@broadcast') return false;
-  if (msg.key.remoteJid?.endsWith('@g.us')) return false;
-  if (!msg.key.remoteJid?.endsWith('@s.whatsapp.net')) return false;
-  if (msg.key.fromMe) return false;
-  if (!msg.message) return false;
-  if (msg.message.reactionMessage) return false;
-  if (msg.message.protocolMessage) return false;
+  // Log inicial
+  log('INFO', `🔎 Analisando: ${JSON.stringify({
+    remoteJid: msg.key?.remoteJid,
+    fromMe: msg.key?.fromMe,
+    hasMessage: !!msg.message,
+    msgId: msg.key?.id
+  })}`);
+  
+  if (!msg?.key?.remoteJid) {
+    log('WARNING', '❌ Sem remoteJid');
+    return false;
+  }
+  
+  if (msg.key.remoteJid === 'status@broadcast') {
+    log('INFO', '⏭️ Status broadcast ignorado');
+    return false;
+  }
+  
+  if (msg.key.remoteJid?.endsWith('@g.us')) {
+    log('INFO', '⏭️ Mensagem de grupo ignorada');
+    return false;
+  }
+  
+  if (!msg.key.remoteJid?.endsWith('@s.whatsapp.net')) {
+    log('WARNING', `❌ RemoteJid inválido: ${msg.key.remoteJid}`);
+    return false;
+  }
+  
+  if (msg.key.fromMe) {
+    log('INFO', '⏭️ Mensagem própria ignorada');
+    return false;
+  }
+  
+  if (!msg.message) {
+    log('WARNING', '❌ Sem conteúdo de mensagem');
+    return false;
+  }
+  
+  if (msg.message.reactionMessage) {
+    log('INFO', '⏭️ Reação ignorada');
+    return false;
+  }
+  
+  if (msg.message.protocolMessage) {
+    log('INFO', '⏭️ Mensagem de protocolo ignorada');
+    return false;
+  }
   
   const msgId = msg.key.id;
-  if (processedMsgs.has(msgId)) return false;
+  if (processedMsgs.has(msgId)) {
+    log('WARNING', '⏭️ Mensagem já processada');
+    return false;
+  }
   
   if (!isRecentMessage(msg)) {
     log('INFO', '⏭️ Mensagem antiga ignorada');
@@ -252,19 +294,30 @@ function shouldProcessMessage(msg) {
   if (processedMsgs.size > 1000) {
     const toDelete = Array.from(processedMsgs).slice(0, 500);
     toDelete.forEach(id => processedMsgs.delete(id));
+    log('INFO', '🗑️ Cache de mensagens limpo');
   }
   
+  log('SUCCESS', '✅ Mensagem válida para processamento!');
   return true;
 }
 
 async function handleMessage(msg) {
-  if (!shouldProcessMessage(msg)) return;
+  log('INFO', `🔍 Verificando msg | ID: ${msg.key.id}`);
+  
+  if (!shouldProcessMessage(msg)) {
+    log('WARNING', '⚠️ Mensagem filtrada por shouldProcessMessage');
+    return;
+  }
+  
+  log('SUCCESS', '✅ Mensagem aprovada! Enviando para processMessage...');
   
   try {
     await processMessage(sock, msg);
+    log('SUCCESS', '✅ Mensagem processada com sucesso!');
   } catch (err) {
-    if (!err.message?.includes('Connection')) {
-      log('ERROR', `Erro: ${err.message}`);
+    log('ERROR', `❌ Erro em processMessage: ${err.message}`);
+    if (process.env.DEBUG_MODE === 'true') {
+      console.error(err);
     }
   }
 }
@@ -403,9 +456,20 @@ async function connectWhatsApp() {
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-      if (m.type !== 'notify') return;
+      log('INFO', `📨 Evento messages.upsert | Tipo: ${m.type} | Msgs: ${m.messages.length}`);
+      
+      if (m.type !== 'notify') {
+        log('WARNING', `⚠️ Tipo ignorado: ${m.type}`);
+        return;
+      }
+      
       for (const msg of m.messages) {
-        await handleMessage(msg);
+        try {
+          log('INFO', `📥 Processando msg de: ${msg.key.remoteJid}`);
+          await handleMessage(msg);
+        } catch (err) {
+          log('ERROR', `❌ Erro ao processar msg: ${err.message}`);
+        }
       }
     });
 
