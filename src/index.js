@@ -10,7 +10,6 @@ import { createClient } from '@supabase/supabase-js';
 import NodeCache from 'node-cache';
 import dotenv from 'dotenv';
 
-import keepAlive from './keep-alive.js';
 import { validateGroqConfig } from './config/groq.js';
 import { log } from './utils/helpers.js';
 import { printStats, cleanExpiredBlocks } from './services/database.js';
