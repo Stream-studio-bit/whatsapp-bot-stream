@@ -1,14 +1,12 @@
 import makeWASocket, { 
   DisconnectReason,
-  fetchLatestBaileysVersion,
-  initAuthCreds,
-  BufferJSON
+  fetchLatestBaileysVersion
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import express from 'express';
 import QRCode from 'qrcode';
-import { MongoClient } from 'mongodb';
+import { createClient } from '@supabase/supabase-js';
 import NodeCache from 'node-cache';
 import dotenv from 'dotenv';
 
@@ -17,6 +15,7 @@ import { validateGroqConfig } from './config/groq.js';
 import { log } from './utils/helpers.js';
 import { printStats, cleanExpiredBlocks } from './services/database.js';
 import { processMessage } from './controllers/messageHandler.js';
+import { useSupabaseAuthState } from './services/supabaseAuthState.js';
 
 dotenv.config();
 
@@ -25,7 +24,10 @@ dotenv.config();
 // ==========================================
 
 const CONFIG = {
-  mongodb: process.env.MONGODB_URI,
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    anonKey: process.env.SUPABASE_ANON_KEY
+  },
   sessionId: process.env.SESSION_ID || 'stream-studio-bot',
   botName: process.env.BOT_NAME || 'Assistente Stream Studio',
   ownerName: process.env.OWNER_NAME || 'Roberto',
@@ -39,7 +41,7 @@ const CONFIG = {
 // ==========================================
 
 let sock = null;
-let mongoClient = null;
+let supabase = null;
 let httpServer = null;
 let qrCode = null;
 let reconnectAttempts = 0;
@@ -60,99 +62,7 @@ function showBanner() {
   console.log('\x1b[36m╚═══════════════════════════════════════╝\x1b[0m\n');
   console.log(`📱 Bot: ${CONFIG.botName}`);
   console.log(`👤 Owner: ${CONFIG.ownerName}`);
-  console.log(`🌐 Platform: ${process.env.RENDER ? 'Render' : 'Local'}\n`);
-}
-
-// ==========================================
-// MONGODB AUTH STATE
-// ==========================================
-
-async function useMongoDBAuthState(collection) {
-  const readData = async (key) => {
-    try {
-      const doc = await collection.findOne({ _id: key });
-      if (!doc) return null;
-      
-      // Usa BufferJSON.reviver para deserializar corretamente
-      return JSON.parse(JSON.stringify(doc.value), BufferJSON.reviver);
-    } catch (err) {
-      log('ERROR', `Erro ao ler ${key}: ${err.message}`);
-      return null;
-    }
-  };
-
-  const writeData = async (key, value) => {
-    try {
-      // Usa BufferJSON.replacer para serializar corretamente
-      const serialized = JSON.parse(JSON.stringify(value, BufferJSON.replacer));
-      
-      await collection.replaceOne(
-        { _id: key },
-        { _id: key, value: serialized },
-        { upsert: true }
-      );
-    } catch (e) {
-      log('ERROR', `Erro ao salvar ${key}: ${e.message}`);
-    }
-  };
-
-  const removeData = async (key) => {
-    try {
-      await collection.deleteOne({ _id: key });
-    } catch (err) {
-      log('ERROR', `Erro ao remover ${key}: ${err.message}`);
-    }
-  };
-
-  const clearAll = async () => {
-    try {
-      await collection.deleteMany({});
-      log('SUCCESS', '✅ Sessão limpa');
-    } catch (err) {
-      log('ERROR', `Erro ao limpar sessão: ${err.message}`);
-    }
-  };
-
-  // Inicializa credenciais
-  const creds = await readData('creds') || initAuthCreds();
-
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const data = {};
-          await Promise.all(
-            ids.map(async (id) => {
-              const value = await readData(`${type}-${id}`);
-              if (value) {
-                data[id] = value;
-              }
-            })
-          );
-          return data;
-        },
-        set: async (data) => {
-          const tasks = [];
-          for (const category in data) {
-            for (const id in data[category]) {
-              const value = data[category][id];
-              const key = `${category}-${id}`;
-              
-              if (value) {
-                tasks.push(writeData(key, value));
-              } else {
-                tasks.push(removeData(key));
-              }
-            }
-          }
-          await Promise.all(tasks);
-        }
-      }
-    },
-    saveCreds: () => writeData('creds', creds),
-    clearAll
-  };
+  console.log(`🌐 Platform: Docker + Supabase\n`);
 }
 
 // ==========================================
@@ -245,19 +155,19 @@ function shouldProcessMessage(msg) {
   const remoteJid = msg.key.remoteJid;
   
   if (remoteJid === 'status@broadcast') {
-    log('INFO', '⏭️ Status broadcast ignorado');
+    log('INFO', '⭐️ Status broadcast ignorado');
     return false;
   }
   
   // Ignora grupos
   if (remoteJid.endsWith('@g.us')) {
-    log('INFO', '⏭️ Mensagem de grupo ignorada');
+    log('INFO', '⭐️ Mensagem de grupo ignorada');
     return false;
   }
   
   // Ignora newsletters/canais
   if (remoteJid.endsWith('@newsletter')) {
-    log('INFO', '⏭️ Newsletter ignorado');
+    log('INFO', '⭐️ Newsletter ignorado');
     return false;
   }
   
@@ -272,7 +182,7 @@ function shouldProcessMessage(msg) {
   }
   
   if (msg.key.fromMe) {
-    log('INFO', '⏭️ Mensagem própria ignorada');
+    log('INFO', '⭐️ Mensagem própria ignorada');
     return false;
   }
   
@@ -282,23 +192,23 @@ function shouldProcessMessage(msg) {
   }
   
   if (msg.message.reactionMessage) {
-    log('INFO', '⏭️ Reação ignorada');
+    log('INFO', '⭐️ Reação ignorada');
     return false;
   }
   
   if (msg.message.protocolMessage) {
-    log('INFO', '⏭️ Mensagem de protocolo ignorada');
+    log('INFO', '⭐️ Mensagem de protocolo ignorada');
     return false;
   }
   
   const msgId = msg.key.id;
   if (processedMsgs.has(msgId)) {
-    log('WARNING', '⏭️ Mensagem já processada');
+    log('WARNING', '⭐️ Mensagem já processada');
     return false;
   }
   
   if (!isRecentMessage(msg)) {
-    log('INFO', '⏭️ Mensagem antiga ignorada');
+    log('INFO', '⭐️ Mensagem antiga ignorada');
     return false;
   }
   
@@ -366,11 +276,10 @@ async function connectWhatsApp() {
   try {
     log('INFO', `🔄 Conectando (${reconnectAttempts}/${CONFIG.maxReconnects})...`);
 
-    // Conecta MongoDB
-    if (!mongoClient) {
-      mongoClient = new MongoClient(CONFIG.mongodb);
-      await mongoClient.connect();
-      log('SUCCESS', '✅ MongoDB conectado');
+    // Conecta Supabase
+    if (!supabase) {
+      supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.anonKey);
+      log('SUCCESS', '✅ Supabase conectado');
     }
 
     // Busca versão do Baileys
@@ -385,8 +294,10 @@ async function connectWhatsApp() {
     }
 
     // Auth state
-    const collection = mongoClient.db('baileys_auth').collection(CONFIG.sessionId);
-    const { state, saveCreds, clearAll } = await useMongoDBAuthState(collection);
+    const { state, saveCreds, clearAll } = await useSupabaseAuthState(
+      supabase,
+      CONFIG.sessionId
+    );
 
     // Cria socket
     sock = makeWASocket({
@@ -540,10 +451,13 @@ function setupConsoleCommands() {
         break;
 
       case 'clearsession':
-        if (mongoClient) {
+        if (supabase) {
           try {
-            const db = mongoClient.db('baileys_auth');
-            await db.collection(CONFIG.sessionId).deleteMany({});
+            const { error } = await supabase.storage
+              .from('whatsapp-sessions')
+              .remove([`${CONFIG.sessionId}/session.json`]);
+            
+            if (error) throw error;
             log('SUCCESS', '✅ Sessão limpa! Reinicie o bot.');
           } catch (err) {
             log('ERROR', `Erro: ${err.message}`);
@@ -607,11 +521,6 @@ async function shutdown() {
     log('INFO', '✅ Servidor HTTP encerrado');
   }
 
-  if (mongoClient) {
-    await mongoClient.close();
-    log('INFO', '✅ MongoDB desconectado');
-  }
-
   if (sock) {
     sock.ws?.close();
     sock = null;
@@ -639,8 +548,8 @@ async function start() {
       process.exit(1);
     }
 
-    if (!CONFIG.mongodb) {
-      console.error('❌ Configure MONGODB_URI no .env!');
+    if (!CONFIG.supabase.url || !CONFIG.supabase.anonKey) {
+      console.error('❌ Configure SUPABASE_URL e SUPABASE_ANON_KEY no .env!');
       process.exit(1);
     }
 

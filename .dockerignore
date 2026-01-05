@@ -2,11 +2,11 @@ node_modules
 npm-debug.log
 .env
 .env.local
-sessions
+.git
+.gitignore
 *.md
 .vscode
 .idea
-*.log
 temp/*
 auth_info/*
 !temp/.gitkeep

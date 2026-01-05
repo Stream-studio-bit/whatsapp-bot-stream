@@ -1,48 +1,24 @@
-import Groq from 'groq-sdk';
-import dotenv from 'dotenv';
+/**
+ * 🧠 OmniWA Bot - Configuração Groq AI
+ * 
+ * Responsabilidades:
+ * - Configurar cliente Groq (modelo, temperatura, timeout)
+ * - Fazer chamadas à IA com retry automático
+ * - Monitorar estatísticas de uso da API
+ * - Validar configuração da API Key
+ */
 
-dotenv.config();
+const Groq = require('groq-sdk');
+const config = require('./env');
+const logger = require('../utils/logger');
 
 // Inicializa cliente Groq
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY
+  apiKey: config.groq.apiKey
 });
 
 /**
- * Configurações padrão da IA
- * 
- * 🔥 TEMPERATURA AJUSTADA: 0.5 (antes: 0.7)
- * 
- * EXPLICAÇÃO:
- * - 0.0 a 0.3: Muito determinístico e focado
- * - 0.4 a 0.6: Equilibrado - criativo mas consistente ✅ (RECOMENDADO)
- * - 0.7 a 1.0: Muito criativo e imprevisível
- * 
- * Para um chatbot de atendimento, precisamos de:
- * ✅ Consistência nas respostas
- * ✅ Foco no contexto e instruções
- * ✅ Menos "criatividade" e mais "precisão"
- * ❌ Evitar respostas repetitivas ou fora do padrão
- */
-export const AI_CONFIG = {
-  model: process.env.AI_MODEL || 'llama-3.3-70b-versatile',
-  temperature: 0.5, // 🔥 ALTERADO de 0.7 para 0.5
-  max_tokens: parseInt(process.env.MAX_AI_TOKENS) || 2000,
-  top_p: 0.9,
-  stream: false
-};
-
-/**
- * 🔥 NOVA: Configurações de retry
- */
-const RETRY_CONFIG = {
-  maxRetries: 3,
-  baseDelay: 1000, // 1 segundo
-  maxDelay: 10000  // 10 segundos
-};
-
-/**
- * 🔥 NOVA: Estatísticas de chamadas
+ * 📊 Estatísticas de chamadas da API
  */
 const apiStats = {
   totalCalls: 0,
@@ -55,17 +31,23 @@ const apiStats = {
 };
 
 /**
- * 🔥 NOVA FUNÇÃO: Sleep/delay para retry
- * @param {number} ms - Milissegundos
+ * ⚙️ Configurações de retry
+ */
+const RETRY_CONFIG = {
+  maxRetries: 3,
+  baseDelay: 1000, // 1 segundo
+  maxDelay: 10000  // 10 segundos
+};
+
+/**
+ * ⏱️ Sleep/delay para retry
  */
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Calcula delay exponencial para retry
- * @param {number} attempt - Número da tentativa
- * @returns {number} Delay em milissegundos
+ * 📈 Calcula delay exponencial para retry
  */
 function getExponentialDelay(attempt) {
   const delay = Math.min(
@@ -78,13 +60,22 @@ function getExponentialDelay(attempt) {
 }
 
 /**
- * 🔥 MELHORADA: Faz uma chamada para a IA Groq com retry automático
+ * 🤖 Faz chamada à IA Groq com retry automático
+ * 
  * @param {Array} messages - Array de mensagens no formato [{ role, content }]
  * @param {Object} customConfig - Configurações personalizadas (opcional)
  * @returns {Promise<string>} Resposta da IA
  */
-export async function callGroqAI(messages, customConfig = {}) {
-  const config = { ...AI_CONFIG, ...customConfig };
+async function callGroqAI(messages, customConfig = {}) {
+  // Configuração final (merge com customConfig)
+  const aiConfig = {
+    model: customConfig.model || config.groq.model,
+    temperature: customConfig.temperature !== undefined ? customConfig.temperature : config.groq.temperature,
+    max_tokens: customConfig.max_tokens || config.groq.maxTokens,
+    top_p: customConfig.top_p || 0.9,
+    stream: false
+  };
+
   const startTime = Date.now();
   
   // Validação de entrada
@@ -95,28 +86,28 @@ export async function callGroqAI(messages, customConfig = {}) {
   apiStats.totalCalls++;
   apiStats.lastCallTime = new Date();
   
-  // 🔥 RETRY LOGIC
   let lastError = null;
   
+  // Loop de retry
   for (let attempt = 0; attempt < RETRY_CONFIG.maxRetries; attempt++) {
     try {
-      // Log da tentativa
-      if (process.env.DEBUG_AI === 'true') {
-        console.log(`🤖 Chamada Groq AI (Tentativa ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`);
-        console.log(`   Modelo: ${config.model}`);
-        console.log(`   Temperatura: ${config.temperature}`);
-        console.log(`   Max Tokens: ${config.max_tokens}`);
-        console.log(`   Mensagens: ${messages.length}`);
+      // Log da tentativa (se debug ativado)
+      if (config.debug.debugAI) {
+        logger.debug(`🤖 Chamada Groq AI (Tentativa ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`);
+        logger.debug(`   Modelo: ${aiConfig.model}`);
+        logger.debug(`   Temperatura: ${aiConfig.temperature}`);
+        logger.debug(`   Max Tokens: ${aiConfig.max_tokens}`);
+        logger.debug(`   Mensagens: ${messages.length}`);
       }
       
       // Faz a chamada
       const chatCompletion = await groq.chat.completions.create({
         messages: messages,
-        model: config.model,
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        top_p: config.top_p,
-        stream: config.stream
+        model: aiConfig.model,
+        temperature: aiConfig.temperature,
+        max_tokens: aiConfig.max_tokens,
+        top_p: aiConfig.top_p,
+        stream: aiConfig.stream
       });
 
       const response = chatCompletion.choices[0]?.message?.content || '';
@@ -125,7 +116,7 @@ export async function callGroqAI(messages, customConfig = {}) {
         throw new Error('Resposta vazia da IA');
       }
 
-      // Sucesso!
+      // ✅ SUCESSO!
       const responseTime = Date.now() - startTime;
       apiStats.successfulCalls++;
       
@@ -135,14 +126,14 @@ export async function callGroqAI(messages, customConfig = {}) {
         (apiStats.averageResponseTime * (totalSuccessful - 1) + responseTime) / totalSuccessful
       );
       
-      if (process.env.DEBUG_AI === 'true') {
-        console.log(`✅ Resposta gerada com sucesso:`);
-        console.log(`   Tamanho: ${response.length} caracteres`);
-        console.log(`   Tempo: ${responseTime}ms`);
-        console.log(`   Tokens usados: ${chatCompletion.usage?.total_tokens || 'N/A'}`);
+      if (config.debug.debugAI) {
+        logger.debug(`✅ Resposta gerada com sucesso:`);
+        logger.debug(`   Tamanho: ${response.length} caracteres`);
+        logger.debug(`   Tempo: ${responseTime}ms`);
+        logger.debug(`   Tokens usados: ${chatCompletion.usage?.total_tokens || 'N/A'}`);
         
         if (attempt > 0) {
-          console.log(`   ⚠️ Sucesso após ${attempt} tentativa(s) falhada(s)`);
+          logger.debug(`   ⚠️ Sucesso após ${attempt} tentativa(s) falhada(s)`);
           apiStats.totalRetries += attempt;
         }
       }
@@ -158,8 +149,8 @@ export async function callGroqAI(messages, customConfig = {}) {
       };
       
       // Log do erro
-      console.error(`❌ Erro na chamada Groq AI (Tentativa ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`);
-      console.error(`   Erro: ${error.message}`);
+      logger.error(`❌ Erro na chamada Groq AI (Tentativa ${attempt + 1}/${RETRY_CONFIG.maxRetries}):`);
+      logger.error(`   Erro: ${error.message}`);
       
       // Verifica se deve fazer retry
       const isLastAttempt = attempt === RETRY_CONFIG.maxRetries - 1;
@@ -180,8 +171,8 @@ export async function callGroqAI(messages, customConfig = {}) {
       // Calcula delay antes do retry
       const delay = getExponentialDelay(attempt);
       
-      if (process.env.DEBUG_AI === 'true') {
-        console.log(`⏳ Aguardando ${delay}ms antes da próxima tentativa...`);
+      if (config.debug.debugAI) {
+        logger.debug(`⏳ Aguardando ${delay}ms antes da próxima tentativa...`);
       }
       
       await sleep(delay);
@@ -189,21 +180,19 @@ export async function callGroqAI(messages, customConfig = {}) {
   }
   
   // Se chegou aqui, todas as tentativas falharam
-  console.error(`❌ Todas as tentativas falharam para chamada Groq AI`);
-  console.error(`   Último erro: ${lastError?.message}`);
+  logger.error(`❌ Todas as tentativas falharam para chamada Groq AI`);
+  logger.error(`   Último erro: ${lastError?.message}`);
   
   // Retorna mensagem de erro apropriada
   return getErrorMessage(lastError);
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Gera mensagem de erro apropriada
- * @param {Error} error - Erro capturado
- * @returns {string} Mensagem para o usuário
+ * 💬 Gera mensagem de erro apropriada para o usuário
  */
 function getErrorMessage(error) {
   if (!error) {
-    return 'Desculpe, estou com dificuldades técnicas no momento. Por favor, aguarde que o Roberto irá atendê-lo em breve.';
+    return `Desculpe, estou com dificuldades técnicas no momento. Por favor, entre em contato com ${config.platform.ownerName} para atendimento.`;
   }
   
   const errorMsg = error.message.toLowerCase();
@@ -224,58 +213,52 @@ function getErrorMessage(error) {
   }
   
   // Erro genérico
-  return 'Desculpe, estou com dificuldades técnicas no momento. Por favor, aguarde que o Roberto irá atendê-lo em breve.';
+  return `Desculpe, estou com dificuldades técnicas no momento. Por favor, entre em contato com ${config.platform.ownerName} para atendimento.`;
 }
 
 /**
- * Valida se a API Key está configurada
- * @returns {boolean}
+ * ✅ Valida se a configuração está correta
  */
-export function validateGroqConfig() {
-  if (!process.env.GROQ_API_KEY || process.env.GROQ_API_KEY === 'sua_chave_groq_aqui') {
-    console.error('❌ ERRO: Chave da API Groq não configurada!');
-    console.error('📝 Configure a variável GROQ_API_KEY no arquivo .env');
-    console.error('🔗 Obtenha sua chave em: https://console.groq.com/keys');
+function validateGroqConfig() {
+  try {
+    if (!config.groq.apiKey || config.groq.apiKey === 'sua_chave_groq_aqui') {
+      logger.error('❌ ERRO: Chave da API Groq não configurada!');
+      logger.error('📝 Configure a variável GROQ_API_KEY no arquivo .env');
+      logger.error('🔗 Obtenha sua chave em: https://console.groq.com/keys');
+      return false;
+    }
+    
+    logger.info('✅ Groq AI configurado com sucesso!');
+    logger.info(`📊 Modelo: ${config.groq.model}`);
+    logger.info(`🌡️  Temperatura: ${config.groq.temperature}`);
+    logger.info(`📝 Max Tokens: ${config.groq.maxTokens}`);
+    logger.info(`🔄 Max Retries: ${RETRY_CONFIG.maxRetries}`);
+    
+    return true;
+  } catch (error) {
+    logger.error('❌ Erro ao validar configuração Groq:', error);
+    return false;
+  }
+}
+
+/**
+ * 🔧 Permite ajustar temperatura dinamicamente
+ */
+function setTemperature(newTemperature) {
+  if (newTemperature < 0 || newTemperature > 2) {
+    logger.warn('⚠️ Temperatura deve estar entre 0.0 e 2.0');
     return false;
   }
   
-  console.log('✅ Groq AI configurado com sucesso!');
-  console.log(`📊 Modelo: ${AI_CONFIG.model}`);
-  console.log(`🌡️  Temperatura: ${AI_CONFIG.temperature}`);
-  console.log(`📝 Max Tokens: ${AI_CONFIG.max_tokens}`);
-  console.log(`🔄 Max Retries: ${RETRY_CONFIG.maxRetries}`);
-  
+  config.groq.temperature = newTemperature;
+  logger.info(`🌡️ Temperatura ajustada para: ${newTemperature}`);
   return true;
 }
 
 /**
- * Permite ajustar temperatura dinamicamente se necessário
- * @param {number} newTemperature - Nova temperatura (0.0 a 1.0)
+ * 📊 Obtém estatísticas de uso da API
  */
-export function setTemperature(newTemperature) {
-  if (newTemperature < 0 || newTemperature > 1) {
-    console.warn('⚠️ Temperatura deve estar entre 0.0 e 1.0');
-    return false;
-  }
-  
-  AI_CONFIG.temperature = newTemperature;
-  console.log(`🌡️ Temperatura ajustada para: ${newTemperature}`);
-  return true;
-}
-
-/**
- * Retorna configurações atuais
- * @returns {Object}
- */
-export function getAIConfig() {
-  return { ...AI_CONFIG };
-}
-
-/**
- * 🔥 NOVA FUNÇÃO: Obtém estatísticas de uso da API
- * @returns {Object}
- */
-export function getAPIStats() {
+function getAPIStats() {
   const successRate = apiStats.totalCalls > 0
     ? ((apiStats.successfulCalls / apiStats.totalCalls) * 100).toFixed(1)
     : 0;
@@ -293,39 +276,39 @@ export function getAPIStats() {
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Mostra estatísticas no console
+ * 📈 Mostra estatísticas no console
  */
-export function showAPIStats() {
+function showAPIStats() {
   const stats = getAPIStats();
   
-  console.log('\n🤖 ╔═══════════════════════════════════════════╗');
-  console.log('🤖 ESTATÍSTICAS DA API GROQ');
-  console.log('🤖 ╚═══════════════════════════════════════════╝');
-  console.log(`📞 Total de chamadas: ${stats.totalCalls}`);
-  console.log(`✅ Chamadas bem-sucedidas: ${stats.successfulCalls}`);
-  console.log(`❌ Chamadas falhadas: ${stats.failedCalls}`);
-  console.log(`📊 Taxa de sucesso: ${stats.successRate}`);
-  console.log(`🔄 Total de retries: ${stats.totalRetries}`);
-  console.log(`⚡ Tempo médio de resposta: ${stats.averageResponseTime}`);
+  logger.info('🤖 ═══════════════════════════════════════════');
+  logger.info('🤖 ESTATÍSTICAS DA API GROQ');
+  logger.info('🤖 ═══════════════════════════════════════════');
+  logger.info(`📞 Total de chamadas: ${stats.totalCalls}`);
+  logger.info(`✅ Chamadas bem-sucedidas: ${stats.successfulCalls}`);
+  logger.info(`❌ Chamadas falhadas: ${stats.failedCalls}`);
+  logger.info(`📊 Taxa de sucesso: ${stats.successRate}`);
+  logger.info(`🔄 Total de retries: ${stats.totalRetries}`);
+  logger.info(`⚡ Tempo médio de resposta: ${stats.averageResponseTime}`);
   
   if (stats.lastCallTime) {
-    console.log(`🕐 Última chamada: ${stats.lastCallTime.toLocaleString('pt-BR')}`);
+    logger.info(`🕐 Última chamada: ${stats.lastCallTime.toLocaleString('pt-BR')}`);
   }
   
   if (stats.lastError) {
-    console.log(`\n⚠️ Último erro:`);
-    console.log(`   Mensagem: ${stats.lastError.message}`);
-    console.log(`   Timestamp: ${stats.lastError.timestamp.toLocaleString('pt-BR')}`);
-    console.log(`   Tentativa: ${stats.lastError.attempt}`);
+    logger.info(`\n⚠️ Último erro:`);
+    logger.info(`   Mensagem: ${stats.lastError.message}`);
+    logger.info(`   Timestamp: ${stats.lastError.timestamp.toLocaleString('pt-BR')}`);
+    logger.info(`   Tentativa: ${stats.lastError.attempt}`);
   }
   
-  console.log('🤖 ╚═══════════════════════════════════════════╝\n');
+  logger.info('🤖 ═══════════════════════════════════════════\n');
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Reseta estatísticas
+ * 🔄 Reseta estatísticas
  */
-export function resetAPIStats() {
+function resetAPIStats() {
   apiStats.totalCalls = 0;
   apiStats.successfulCalls = 0;
   apiStats.failedCalls = 0;
@@ -334,15 +317,14 @@ export function resetAPIStats() {
   apiStats.lastError = null;
   apiStats.lastCallTime = null;
   
-  console.log('✅ Estatísticas da API resetadas');
+  logger.info('✅ Estatísticas da API resetadas');
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Testa conexão com a API
- * @returns {Promise<boolean>}
+ * 🧪 Testa conexão com a API
  */
-export async function testAPIConnection() {
-  console.log('\n🧪 Testando conexão com Groq API...\n');
+async function testAPIConnection() {
+  logger.info('\n🧪 Testando conexão com Groq API...\n');
   
   try {
     const testMessages = [
@@ -359,24 +341,23 @@ export async function testAPIConnection() {
     const response = await callGroqAI(testMessages, { max_tokens: 10 });
     
     if (response && response.length > 0) {
-      console.log('✅ Conexão com Groq API bem-sucedida!');
-      console.log(`   Resposta recebida: "${response}"\n`);
+      logger.info('✅ Conexão com Groq API bem-sucedida!');
+      logger.info(`   Resposta recebida: "${response}"\n`);
       return true;
     } else {
-      console.log('❌ Conexão falhou: resposta vazia\n');
+      logger.error('❌ Conexão falhou: resposta vazia\n');
       return false;
     }
   } catch (error) {
-    console.log(`❌ Conexão falhou: ${error.message}\n`);
+    logger.error(`❌ Conexão falhou: ${error.message}\n`);
     return false;
   }
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Ajusta configurações de retry
- * @param {Object} newConfig - Novas configurações
+ * 🔧 Ajusta configurações de retry
  */
-export function setRetryConfig(newConfig) {
+function setRetryConfig(newConfig) {
   if (newConfig.maxRetries !== undefined) {
     RETRY_CONFIG.maxRetries = newConfig.maxRetries;
   }
@@ -387,18 +368,47 @@ export function setRetryConfig(newConfig) {
     RETRY_CONFIG.maxDelay = newConfig.maxDelay;
   }
   
-  console.log('✅ Configurações de retry atualizadas:');
-  console.log(`   Max Retries: ${RETRY_CONFIG.maxRetries}`);
-  console.log(`   Base Delay: ${RETRY_CONFIG.baseDelay}ms`);
-  console.log(`   Max Delay: ${RETRY_CONFIG.maxDelay}ms`);
+  logger.info('✅ Configurações de retry atualizadas:');
+  logger.info(`   Max Retries: ${RETRY_CONFIG.maxRetries}`);
+  logger.info(`   Base Delay: ${RETRY_CONFIG.baseDelay}ms`);
+  logger.info(`   Max Delay: ${RETRY_CONFIG.maxDelay}ms`);
 }
 
 /**
- * 🔥 NOVA FUNÇÃO: Obtém configurações de retry atuais
- * @returns {Object}
+ * 📋 Obtém configurações de retry atuais
  */
-export function getRetryConfig() {
+function getRetryConfig() {
   return { ...RETRY_CONFIG };
 }
 
-export default groq;
+/**
+ * 📦 Inicializa e valida a configuração do Groq
+ */
+async function loadGroqConfig() {
+  const isValid = validateGroqConfig();
+  
+  if (!isValid) {
+    throw new Error('Configuração do Groq inválida');
+  }
+  
+  // Teste de conexão (opcional, apenas em modo debug)
+  if (config.debug.debugAI) {
+    await testAPIConnection();
+  }
+  
+  return true;
+}
+
+module.exports = {
+  groq,
+  callGroqAI,
+  loadGroqConfig,
+  validateGroqConfig,
+  setTemperature,
+  getAPIStats,
+  showAPIStats,
+  resetAPIStats,
+  testAPIConnection,
+  setRetryConfig,
+  getRetryConfig
+};

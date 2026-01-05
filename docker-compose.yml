@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build: .
+    container_name: stream-studio-bot
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./temp:/app/temp
+    networks:
+      - bot-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  bot-network:
+    driver: bridge
