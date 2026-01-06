@@ -11,7 +11,6 @@ import NodeCache from 'node-cache';
 import dotenv from 'dotenv';
 
 import { validateGroqConfig } from './config/groq.js';
-import { processMessage } from './controllers/messageHandler.js';
 import { useSupabaseAuthState } from './services/supabaseAuthState.js';
 
 dotenv.config();
