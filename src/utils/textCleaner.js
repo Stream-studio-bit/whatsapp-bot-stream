@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * textCleaner.js
  * Utilitário para limpar e normalizar mensagens
@@ -7,7 +8,7 @@
  * - Sanitiza entrada do usuário
  */
 
-const logger = require('./logger');
+import logger from './logger.js';
 
 /**
  * Remove emojis do texto
@@ -498,7 +499,7 @@ function cleanMessage(text, options = {}) {
   }
 }
 
-module.exports = {
+export {
   removeEmojis,
   normalizeWhitespace,
   removeUrls,
@@ -518,5 +519,28 @@ module.exports = {
   sanitizeInput,
   truncate,
   extractKeywords,
-  cleanMessage,
+  cleanMessage
+};
+
+export default {
+  removeEmojis,
+  normalizeWhitespace,
+  removeUrls,
+  extractUrls,
+  removeMentions,
+  removeHashtags,
+  extractPhoneNumbers,
+  extractEmails,
+  extractMoneyValues,
+  removeSpecialCharacters,
+  removeAccents,
+  toLowerCase,
+  capitalizeSentences,
+  removeStopwords,
+  detectSpam,
+  cleanForAI,
+  sanitizeInput,
+  truncate,
+  extractKeywords,
+  cleanMessage
 };

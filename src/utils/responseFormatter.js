@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * responseFormatter.js
  * Formata respostas da IA antes de enviar ao usuário
@@ -8,7 +9,7 @@
  * - Remove redundâncias
  */
 
-const logger = require('./logger');
+import logger from './logger.js';
 
 // Configurações de formatação
 const FORMAT_CONFIG = {
@@ -556,7 +557,7 @@ function quickFormat(text) {
   return formatted.trim();
 }
 
-module.exports = {
+export {
   removeDuplicates,
   removeRedundancies,
   applyWhatsAppFormatting,
@@ -571,5 +572,23 @@ module.exports = {
   removeDisclaimers,
   formatResponse,
   quickFormat,
-  FORMAT_CONFIG,
+  FORMAT_CONFIG
+};
+
+export default {
+  removeDuplicates,
+  removeRedundancies,
+  applyWhatsAppFormatting,
+  structureResponse,
+  addContextualEmojis,
+  splitLongMessage,
+  cleanMarkdown,
+  removeAIPrefixes,
+  addCTA,
+  formatNumbers,
+  improveReadability,
+  removeDisclaimers,
+  formatResponse,
+  quickFormat,
+  FORMAT_CONFIG
 };

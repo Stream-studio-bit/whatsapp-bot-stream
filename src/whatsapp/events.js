@@ -1,3 +1,5 @@
+// Convertido para ES Modules
+
 /**
  * events.js
  * Gerencia todos os eventos do WhatsApp
@@ -8,16 +10,16 @@
  * - Status de conexão
  */
 
-const { DisconnectReason } = require('@whiskeysockets/baileys');
-const logger = require('../utils/logger');
-const messageController = require('../controllers/messageController');
+import { DisconnectReason } from '@whiskeysockets/baileys';
+import logger from '../utils/logger.js';
+import messageController from '../controllers/messageController.js';
 
 /**
  * Registra todos os eventos do socket WhatsApp
  * @param {Object} sock - Socket do Baileys
  * @param {Function} onDisconnect - Callback para desconexão
  */
-function registerEvents(sock, onDisconnect) {
+export function registerEvents(sock, onDisconnect) {
   logger.info('Registrando eventos do WhatsApp...');
 
   // Evento: Atualização de conexão
@@ -64,7 +66,7 @@ function handleConnectionUpdate(update, onDisconnect) {
   // QR Code gerado (para primeira conexão)
   if (qr) {
     logger.info('📱 QR Code gerado. Escaneie com seu WhatsApp.');
-    console.log('\n🔳 QR CODE DISPONÍVEL NO TERMINAL\n');
+    console.log('\n📳 QR CODE DISPONÍVEL NO TERMINAL\n');
   }
 
   // Status de conexão alterado
@@ -228,7 +230,7 @@ function handleBlocklistUpdate(blocklist) {
  * @param {Object} sock - Socket do WhatsApp
  * @param {Object} messageKey - Chave da mensagem
  */
-async function sendReadReceipt(sock, messageKey) {
+export async function sendReadReceipt(sock, messageKey) {
   try {
     await sock.readMessages([messageKey]);
     logger.debug('✓✓ Confirmação de leitura enviada');
@@ -243,16 +245,10 @@ async function sendReadReceipt(sock, messageKey) {
  * @param {string} jid - JID do destinatário
  * @param {boolean} isTyping - Se está digitando
  */
-async function sendTypingIndicator(sock, jid, isTyping = true) {
+export async function sendTypingIndicator(sock, jid, isTyping = true) {
   try {
     await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
   } catch (error) {
     logger.error('Erro ao enviar indicador de digitação:', error);
   }
 }
-
-module.exports = {
-  registerEvents,
-  sendReadReceipt,
-  sendTypingIndicator,
-};

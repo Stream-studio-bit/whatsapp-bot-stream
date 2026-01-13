@@ -1,12 +1,13 @@
+// Convertido para ES Modules
 /**
  * groqClient.js
  * Faz chamada direta ao Groq (IA)
  * Retorna a resposta da IA sem pós-processamento
  */
 
-const Groq = require('groq-sdk');
-const { groqConfig } = require('../../config/groq');
-const logger = require('../utils/logger');
+import Groq from 'groq-sdk';
+import { groqConfig } from '../../config/groq.js';
+import logger from '../utils/logger.js';
 
 // Inicializa o cliente Groq
 const groq = new Groq({
@@ -237,7 +238,17 @@ async function testConnection() {
   }
 }
 
-module.exports = {
+/**
+ * Alias para sendMessage (compatibilidade)
+ * @param {string} systemPrompt - Prompt do sistema
+ * @param {string} userMessage - Mensagem do usuário
+ * @returns {Promise<string>} Resposta da IA
+ */
+async function chat(systemPrompt, userMessage) {
+  return await sendMessage(userMessage, systemPrompt);
+}
+
+export {
   sendMessage,
   sendMessageStream,
   estimateTokens,
@@ -245,4 +256,16 @@ module.exports = {
   truncateHistory,
   validateConfig,
   testConnection,
+  chat
+};
+
+export default {
+  sendMessage,
+  sendMessageStream,
+  estimateTokens,
+  isWithinTokenLimit,
+  truncateHistory,
+  validateConfig,
+  testConnection,
+  chat
 };

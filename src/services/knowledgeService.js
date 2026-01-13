@@ -1,11 +1,12 @@
+// Convertido para ES Modules
 /**
  * knowledgeService.js
  * CRUD da base de conhecimento (FAQ, artigos, tutoriais)
  * Usado pelo RAG para fornecer contexto específico à IA
  */
 
-const supabaseClient = require('../database/supabaseClient');
-const logger = require('../utils/logger');
+import supabaseClient from '../database/supabaseClient.js';
+import logger from '../utils/logger.js';
 
 // Nome da tabela de conhecimento no Supabase
 const KNOWLEDGE_TABLE = 'knowledge_base';
@@ -281,7 +282,7 @@ async function deleteKnowledge(id) {
  */
 async function searchKnowledgeByTerm(searchTerm, options = {}) {
   try {
-    logger.debug(`🔍 Buscando documentos com termo: "${searchTerm}"`);
+    logger.debug(`🔎 Buscando documentos com termo: "${searchTerm}"`);
 
     if (!searchTerm || searchTerm.trim().length < 2) {
       logger.warn('⚠️ Termo de busca muito curto');
@@ -433,7 +434,7 @@ async function exportKnowledge(filters = {}) {
   }
 }
 
-module.exports = {
+export {
   createKnowledge,
   listKnowledge,
   getKnowledgeById,
@@ -444,5 +445,5 @@ module.exports = {
   searchKnowledgeByTerm,
   getKnowledgeStats,
   bulkImportKnowledge,
-  exportKnowledge,
+  exportKnowledge
 };

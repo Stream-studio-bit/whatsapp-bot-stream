@@ -1,7 +1,8 @@
+// Convertido para ES Modules
 // src/services/messageService.js
 
-const logger = require('../utils/logger');
-const { delay } = require('@whiskeysockets/baileys');
+import logger from '../utils/logger.js';
+import { delay } from '@whiskeysockets/baileys';
 
 /**
  * 🎯 MESSAGE SERVICE
@@ -491,7 +492,7 @@ function formatToJid(phone) {
   return `${cleanPhone}@s.whatsapp.net`;
 }
 
-module.exports = {
+export {
   // Envio de mensagens
   sendTextMessage,
   sendButtonMessage,

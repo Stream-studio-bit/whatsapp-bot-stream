@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * supportService.js
  * Lógica de suporte técnico para o bot OmniWA
@@ -9,11 +10,16 @@
  * - Resolver problemas técnicos
  */
 
-const groqClient = require('../ai/groqClient');
-const ragEngine = require('../ai/ragEngine');
-const logger = require('../utils/logger');
-const fs = require('fs').promises;
-const path = require('path');
+import groqClient from '../ai/groqClient.js';
+import ragEngine from '../ai/ragEngine.js';
+import logger from '../utils/logger.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Cache do prompt de suporte
 let supportPromptCache = null;
@@ -115,7 +121,7 @@ MISSÃO: Resolver problemas, guiar configurações e garantir que o lojista tenh
    - Verificar se celular está ligado e com internet
    - Não usar mesmo número em outro dispositivo
    - Reconectar via QR Code no Dashboard
-   - ReconexÃ£o automática ativa
+   - Reconexão automática ativa
 
    🔴 IA não respondendo:
    - Verificar se chave API está válida
@@ -269,176 +275,135 @@ function identifyIssueCategory(message) {
     }
   }
 
-  // Se não identificou, retorna genérico
-  return 'general_support';
+  return 'general';
 }
 
 /**
- * Identifica etapa do setup/onboarding
+ * Identifica etapa do setup em que o lojista está
  * @param {string} message - Mensagem do lojista
  * @param {Object} context - Contexto
- * @returns {string} Etapa identificada
+ * @returns {string} Etapa do setup
  */
 function identifySetupStage(message, context = {}) {
   const messageLower = message.toLowerCase();
 
-  // Se contexto já tem etapa, mantém
-  if (context.setupStage) {
-    return context.setupStage;
+  const stages = {
+    account_creation: ['criar conta', 'cadastr', 'registr', 'começar', 'iniciar'],
+    whatsapp_connection: ['conectar whatsapp', 'qr code', 'escanear'],
+    ai_setup: ['configurar ia', 'chave api', 'groq', 'openai', 'gemini'],
+    payment_config: ['mercado pago', 'pagamento', 'access token'],
+    catalog_setup: ['produtos', 'catálogo', 'cadastrar produtos'],
+    first_sale: ['primeira venda', 'testar', 'funcionando'],
+    complete: ['pronto', 'funcionando', 'tudo certo'],
+  };
+
+  for (const [stage, keywords] of Object.entries(stages)) {
+    if (keywords.some(kw => messageLower.includes(kw))) {
+      return stage;
+    }
   }
 
-  // Identifica por palavras-chave
-  if (messageLower.includes('cadastr') || messageLower.includes('criar conta')) {
-    return 'account_creation';
-  }
-
-  if (messageLower.includes('segmento') || messageLower.includes('tipo de negócio')) {
-    return 'segment_selection';
-  }
-
-  if (messageLower.includes('ia') || messageLower.includes('chave') || messageLower.includes('api')) {
-    return 'ai_configuration';
-  }
-
-  if (messageLower.includes('pagamento') || messageLower.includes('mercado pago')) {
-    return 'payment_setup';
-  }
-
-  if (messageLower.includes('whatsapp') || messageLower.includes('qr')) {
-    return 'whatsapp_connection';
-  }
-
-  if (messageLower.includes('produto') || messageLower.includes('catálogo')) {
-    return 'catalog_setup';
-  }
-
-  if (messageLower.includes('test') || messageLower.includes('vend')) {
-    return 'first_sale';
-  }
-
-  return 'unknown';
+  return context.setupStage || 'unknown';
 }
 
 /**
- * Gera guia passo a passo para configurações específicas
- * @param {string} topic - Tópico da configuração
- * @returns {string} Guia formatado
+ * Retorna guia passo a passo para tópicos específicos
+ * @param {string} topic - Tópico do guia
+ * @returns {string|null} Guia formatado ou null
  */
 function getStepByStepGuide(topic) {
   const guides = {
-    whatsapp_connection: `
+    whatsapp_setup: `
 📱 *CONECTAR WHATSAPP - PASSO A PASSO*
 
-1️⃣ Acesse o Dashboard: omniwa-saas.web.app
-2️⃣ Vá em: Configurações → WhatsApp
-3️⃣ Clique em "Conectar WhatsApp"
-4️⃣ Será exibido um QR Code
-5️⃣ No seu celular:
+1️⃣ Acesse: Dashboard → WhatsApp
+2️⃣ Clique "Conectar WhatsApp"
+3️⃣ QR Code aparecerá na tela
+4️⃣ No seu celular:
    • Abra WhatsApp
-   • Toque nos 3 pontos (⋮) → Aparelhos conectados
-   • Toque em "Conectar um aparelho"
-   • Escaneie o QR Code da tela
-6️⃣ Aguarde conexão (5-10 segundos)
-7️⃣ ✅ Pronto! WhatsApp conectado
+   • Menu (⋮) → Aparelhos conectados
+   • Toque "Conectar aparelho"
+   • Escaneie o QR Code
+
+5️⃣ ✅ Pronto! WhatsApp conectado!
 
 ⚠️ *IMPORTANTE:*
-• Use WhatsApp Business (recomendado)
-• Mantenha celular ligado e com internet
-• Não use o mesmo número em outro lugar
-• Após conectar, pode fechar o app
+   • Use WhatsApp Business de preferência
+   • Mantenha celular ligado
+   • Não use mesmo número em outro lugar
+   • Reconexão automática ativada
 
-💡 Se desconectar, basta escanear QR Code novamente!
+💡 Não precisa manter app aberto depois!
 `,
 
-    ai_configuration: `
+    ai_setup: `
 🤖 *CONFIGURAR IA - PASSO A PASSO*
 
-1️⃣ Escolha seu provedor de IA:
-   • OpenAI (GPT-4) - Melhor qualidade
-   • Google Gemini - Gratuito até certo limite
-   • Groq - Mais rápido e barato
+*OPÇÃO 1: GROQ (RECOMENDADO - GRÁTIS)*
 
-2️⃣ Consiga sua chave API:
+1️⃣ Acesse: console.groq.com
+2️⃣ Crie conta gratuita
+3️⃣ Vá em "API Keys"
+4️⃣ Clique "Create API Key"
+5️⃣ Copie a chave gerada
+6️⃣ No Dashboard OmniWA:
+   • IA → Configurar
+   • Cole a chave
+   • Escolha modelo: llama-3.1-70b
+   • Salve e Teste
 
-   *OPENAI:*
-   • Acesse: platform.openai.com/api-keys
-   • Faça login/cadastro
-   • Clique "Create new secret key"
-   • Copie a chave (começa com sk-)
-   • Adicione créditos (mínimo $5)
+*OPÇÃO 2: OPENAI (GPT-4)*
 
-   *GEMINI:*
-   • Acesse: ai.google.dev
-   • Faça login com Google
-   • Clique "Get API Key"
-   • Copie a chave
+1️⃣ Acesse: platform.openai.com
+2️⃣ Crie conta e adicione créditos
+3️⃣ API Keys → Create new key
+4️⃣ Copie a chave
+5️⃣ No Dashboard OmniWA:
+   • Cole a chave
+   • Escolha: gpt-4 ou gpt-3.5
+   • Salve e Teste
 
-   *GROQ:*
-   • Acesse: console.groq.com
-   • Faça cadastro
-   • Vá em "API Keys"
-   • Crie e copie a chave
+*OPÇÃO 3: GOOGLE GEMINI*
 
-3️⃣ No Dashboard OmniWA:
-   • Vá em: Configurações → Inteligência Artificial
-   • Cole a chave API
-   • Escolha o modelo
-   • Clique "Testar Conexão"
-   • Se OK, clique "Salvar"
+1️⃣ Acesse: ai.google.dev
+2️⃣ Get API Key
+3️⃣ Cole no Dashboard OmniWA
+4️⃣ Modelo: gemini-pro
+5️⃣ Salve e Teste
 
-4️⃣ Personalize (opcional):
-   • Tom de voz (formal, casual, amigável)
-   • Saudação personalizada
-   • Horário de funcionamento
-   • Políticas da loja
+💰 *CUSTOS:*
+   • Groq: GRATUITO
+   • OpenAI: ~$0.002/atendimento
+   • Gemini: ~$0.001/atendimento
 
-5️⃣ ✅ Pronto! IA configurada e ativa
-
-💰 *CUSTO:* Você paga direto ao provedor
-   • OpenAI: ~$0.03 por 1000 tokens
-   • Gemini: Gratuito até limite
-   • Groq: Geralmente mais barato
-   • Média: centavos por atendimento
+✅ OmniWA não cobra pela IA!
 `,
 
     payment_setup: `
-💳 *CONFIGURAR MERCADO PAGO - PASSO A PASSO*
+💳 *MERCADO PAGO - PASSO A PASSO*
 
-1️⃣ Criar/acessar conta Mercado Pago:
-   • Acesse: mercadopago.com.br
-   • Faça login ou crie conta
-   • Complete cadastro (CPF/CNPJ)
-   • Ative conta para receber pagamentos
+1️⃣ Acesse: mercadopago.com.br/developers
+2️⃣ Faça login na sua conta
+3️⃣ Vá em "Suas integrações"
+4️⃣ Crie nova aplicação
+5️⃣ Acesse "Credenciais"
+6️⃣ Copie "Access Token de PRODUÇÃO"
+   ⚠️ NÃO use token de teste!
 
-2️⃣ Conseguir Access Token:
-   • Acesse: mercadopago.com.br/developers
-   • Faça login
-   • Vá em: "Suas aplicações"
-   • Clique "Criar aplicação"
-   • Preencha nome (ex: "OmniWA")
-   • Após criar, clique na aplicação
-   • Vá em "Credenciais de produção"
-   • Copie o "Access Token" (começa com APP_USR-)
-
-⚠️ *ATENÇÃO:* Use credenciais de PRODUÇÃO, não de teste!
-
-3️⃣ No Dashboard OmniWA:
-   • Vá em: Configurações → Pagamentos
-   • Cole o Access Token
+7️⃣ No Dashboard OmniWA:
+   • Pagamentos → Configurar
+   • Cole Access Token
+   • Split: 3% (automático)
    • Clique "Testar Conexão"
    • Se OK, clique "Salvar"
 
-4️⃣ Configurar Split (automático):
-   • Sistema configura 3% automaticamente
-   • Você não precisa fazer nada
-
-5️⃣ ✅ Pronto! Pagamentos configurados
+8️⃣ ✅ Pronto! Pagamentos ativos!
 
 💰 *RECEBIMENTO:*
-   • D+7 ou D+14 (conforme sua conta MP)
-   • OmniWA não retém pagamento
-   • Entra direto na sua conta MP
-   • Taxa de 3% já descontada
+   • Venda aprovada → Valor vai para sua conta MP
+   • 3% retido automaticamente
+   • Você recebe 97% em D+7 ou D+14
+   • Conforme configuração da sua conta MP
 
 🔒 *SEGURANÇA:*
    • Token criptografado
@@ -700,7 +665,7 @@ function formatSupportResponse(response, category) {
   return formattedResponse;
 }
 
-module.exports = {
+export {
   handleSupportMessage,
   identifyIssueCategory,
   identifySetupStage,
@@ -708,5 +673,5 @@ module.exports = {
   getQuickSolution,
   shouldEscalateToHuman,
   evaluateSatisfaction,
-  formatSupportResponse,
+  formatSupportResponse
 };

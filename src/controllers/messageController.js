@@ -1,3 +1,6 @@
+// Convertido para ES Modules
+// src/controllers/messageController.js
+
 /**
  * messageController.js (ES6 Module Version)
  * 

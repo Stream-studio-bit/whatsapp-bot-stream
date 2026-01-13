@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * 🗄️ SUPABASE CLIENT
  * Cliente direto para banco de dados Supabase
@@ -9,12 +10,12 @@
  * - Gerenciar tabelas: conversations, blocked_users, whatsapp_sessions, knowledge_base
  */
 
-const { createClient } = require('@supabase/supabase-js');
-const { supabaseUrl, supabaseKey } = require('../config/supabase');
-const logger = require('../utils/logger');
+import { createClient } from '@supabase/supabase-js';
+import config from '../config/env.js';
+import logger from '../utils/logger.js';
 
 // Inicializa o cliente Supabase
-const supabase = createClient(supabaseUrl, supabaseKey, {
+const supabase = createClient(config.supabase.url, config.supabase.anonKey, {
   auth: {
     persistSession: false,
     autoRefreshToken: false
@@ -356,7 +357,7 @@ async function testConnection() {
   }
 }
 
-module.exports = {
+export {
   supabase,
   conversations,
   blockedUsers,
@@ -364,3 +365,5 @@ module.exports = {
   knowledge,
   testConnection
 };
+
+export default supabase;

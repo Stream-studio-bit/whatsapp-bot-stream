@@ -1,7 +1,8 @@
+// Convertido para ES Modules
 // src/controllers/commandController.js
 
-const logger = require('../utils/logger');
-const messageService = require('../services/messageService');
+import logger from '../utils/logger.js';
+import messageService from '../services/messageService.js';
 
 /**
  * 🎯 COMMAND CONTROLLER
@@ -217,12 +218,12 @@ Exemplo: Vendeu R$ 100 = Você recebe R$ 97
 ═══════════════════════════════════
 
 🎯 *Ideal para:*
-• Restaurantes e delivery
-• Lojas de varejo
-• Farmácias
-• Pet shops
-• Mercados
-• Serviços em geral
+- Restaurantes e delivery
+- Lojas de varejo
+- Farmácias
+- Pet shops
+- Mercados
+- Serviços em geral
 
 ═══════════════════════════════════
 
@@ -276,10 +277,10 @@ async function handlePlansCommand(userJid) {
 
 📊 *EXEMPLOS PRÁTICOS:*
 
-• Vendeu R$ 50 → Você recebe R$ 48,50
-• Vendeu R$ 100 → Você recebe R$ 97,00
-• Vendeu R$ 500 → Você recebe R$ 485,00
-• Vendeu R$ 1.000 → Você recebe R$ 970,00
+- Vendeu R$ 50 → Você recebe R$ 48,50
+- Vendeu R$ 100 → Você recebe R$ 97,00
+- Vendeu R$ 500 → Você recebe R$ 485,00
+- Vendeu R$ 1.000 → Você recebe R$ 970,00
 
 *Não vendeu nada no mês? = R$ 0 de custo*
 
@@ -351,9 +352,9 @@ Entre em contato conosco:
 ═══════════════════════════════════
 
 ⏱️ *Tempo Médio de Resposta:*
-• WhatsApp: 2-4 horas (horário comercial)
-• Email: 4-8 horas (horário comercial)
-• Chat: Imediato (se online)
+- WhatsApp: 2-4 horas (horário comercial)
+- Email: 4-8 horas (horário comercial)
+- Chat: Imediato (se online)
 
 ═══════════════════════════════════
 
@@ -484,7 +485,7 @@ Pode começar! 😊
   `.trim();
 }
 
-module.exports = {
+export {
   isCommand,
   processCommand,
   getAvailableCommands,

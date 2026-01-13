@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * userContextService.js
  * Memória de contexto por usuário
@@ -8,8 +9,8 @@
  * - Dados extraídos do usuário
  */
 
-const supabaseClient = require('../database/supabaseClient');
-const logger = require('../utils/logger');
+import supabaseClient from '../database/supabaseClient.js';
+import logger from '../utils/logger.js';
 
 // Nome da tabela de contexto no Supabase
 const CONTEXT_TABLE = 'user_contexts';
@@ -291,7 +292,7 @@ async function updateUserData(userId, userData) {
     const context = await getOrCreateContext(userId);
     const currentData = context.user_data || {};
 
-    // Merge dos dados novos com os existentes
+    // Merge com dados existentes
     const mergedData = {
       ...currentData,
       ...userData,
@@ -306,14 +307,14 @@ async function updateUserData(userId, userData) {
 }
 
 /**
- * Incrementa contador de problemas similares
+ * Incrementa contador de problemas
  * @param {string} userId - ID do usuário
  * @param {string} issueCategory - Categoria do problema
  * @returns {Promise<Object>} Contexto atualizado
  */
 async function incrementIssueCount(userId, issueCategory) {
   try {
-    logger.debug(`⚠️ Incrementando contador de problemas: ${issueCategory}`);
+    logger.debug(`🔧 Incrementando contador de problemas: ${issueCategory}`);
 
     const context = await getOrCreateContext(userId);
     
@@ -585,7 +586,7 @@ async function exportContext(userId) {
   }
 }
 
-module.exports = {
+export {
   getOrCreateContext,
   createContext,
   updateContext,
@@ -601,5 +602,5 @@ module.exports = {
   cleanExpiredContexts,
   getContextStats,
   exportContext,
-  CONTEXT_CONFIG,
+  CONTEXT_CONFIG
 };

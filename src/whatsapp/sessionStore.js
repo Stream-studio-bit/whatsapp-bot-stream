@@ -1,3 +1,5 @@
+// Convertido para ES Modules
+
 /**
  * sessionStore.js
  * Salva e recupera a sessão do WhatsApp no Supabase
@@ -5,8 +7,8 @@
  * Armazena credenciais de autenticação do Baileys
  */
 
-const supabaseClient = require('../database/supabaseClient');
-const logger = require('../utils/logger');
+import supabaseClient from '../database/supabaseClient.js';
+import logger from '../utils/logger.js';
 
 // Nome da tabela no Supabase
 const SESSION_TABLE = 'whatsapp_sessions';
@@ -19,7 +21,7 @@ const SESSION_ID = process.env.SESSION_ID || 'omniwa_bot_session';
  * @param {Object} authState - Estado de autenticação do Baileys
  * @returns {Promise<boolean>} True se salvou com sucesso
  */
-async function saveSession(authState) {
+export async function saveSession(authState) {
   try {
     logger.debug('Salvando sessão no Supabase...');
 
@@ -77,7 +79,7 @@ async function saveSession(authState) {
  * Carrega a sessão do WhatsApp do Supabase
  * @returns {Promise<Object|null>} Estado de autenticação ou null se não existir
  */
-async function loadSession() {
+export async function loadSession() {
   try {
     logger.debug('Carregando sessão do Supabase...');
 
@@ -117,7 +119,7 @@ async function loadSession() {
  * Deleta a sessão do WhatsApp do Supabase
  * @returns {Promise<boolean>} True se deletou com sucesso
  */
-async function deleteSession() {
+export async function deleteSession() {
   try {
     logger.info('Deletando sessão do Supabase...');
 
@@ -140,7 +142,7 @@ async function deleteSession() {
  * Verifica se existe uma sessão salva
  * @returns {Promise<boolean>} True se existe sessão
  */
-async function hasSession() {
+export async function hasSession() {
   try {
     const { data, error } = await supabaseClient
       .from(SESSION_TABLE)
@@ -165,7 +167,7 @@ async function hasSession() {
  * Retorna informações sobre a sessão salva
  * @returns {Promise<Object|null>} Informações da sessão
  */
-async function getSessionInfo() {
+export async function getSessionInfo() {
   try {
     const { data, error } = await supabaseClient
       .from(SESSION_TABLE)
@@ -197,7 +199,7 @@ async function getSessionInfo() {
  * @param {number} daysOld - Dias para considerar sessão antiga (padrão: 30)
  * @returns {Promise<number>} Quantidade de sessões deletadas
  */
-async function cleanupOldSessions(daysOld = 30) {
+export async function cleanupOldSessions(daysOld = 30) {
   try {
     logger.info(`Limpando sessões com mais de ${daysOld} dias...`);
 
@@ -221,12 +223,3 @@ async function cleanupOldSessions(daysOld = 30) {
     return 0;
   }
 }
-
-module.exports = {
-  saveSession,
-  loadSession,
-  deleteSession,
-  hasSession,
-  getSessionInfo,
-  cleanupOldSessions,
-};

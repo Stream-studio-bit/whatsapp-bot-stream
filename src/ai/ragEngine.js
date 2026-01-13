@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * ragEngine.js
  * Mecanismo de conhecimento RAG (Retrieval-Augmented Generation)
@@ -7,8 +8,8 @@
  * - Garante que a IA conheça a plataforma OmniWA
  */
 
-const supabaseClient = require('../database/supabaseClient');
-const logger = require('../utils/logger');
+import supabaseClient from '../database/supabaseClient.js';
+import logger from '../utils/logger.js';
 
 // Nome da tabela de conhecimento no Supabase
 const KNOWLEDGE_TABLE = 'knowledge_base';
@@ -454,7 +455,7 @@ function calculateRelevanceScore(document, query) {
   return queryKeywords.length > 0 ? matches / queryKeywords.length : 0;
 }
 
-module.exports = {
+export {
   searchKnowledge,
   buildContext,
   getContextForQuery,
@@ -462,5 +463,16 @@ module.exports = {
   getFAQKnowledge,
   enrichQuery,
   extractKeywords,
-  calculateRelevanceScore,
+  calculateRelevanceScore
+};
+
+export default {
+  searchKnowledge,
+  buildContext,
+  getContextForQuery,
+  getOmniWABaseKnowledge,
+  getFAQKnowledge,
+  enrichQuery,
+  extractKeywords,
+  calculateRelevanceScore
 };

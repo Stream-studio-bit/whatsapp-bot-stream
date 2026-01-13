@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * 🧠 OmniWA Bot - Configuração Groq AI
  * 
@@ -8,9 +9,9 @@
  * - Validar configuração da API Key
  */
 
-const Groq = require('groq-sdk');
-const config = require('./env');
-const logger = require('../utils/logger');
+import Groq from 'groq-sdk';
+import config from './env.js';
+import logger from '../utils/logger.js';
 
 // Inicializa cliente Groq
 const groq = new Groq({
@@ -281,9 +282,9 @@ function getAPIStats() {
 function showAPIStats() {
   const stats = getAPIStats();
   
-  logger.info('🤖 ═══════════════════════════════════════════');
+  logger.info('🤖 ╔═══════════════════════════════════════════╗');
   logger.info('🤖 ESTATÍSTICAS DA API GROQ');
-  logger.info('🤖 ═══════════════════════════════════════════');
+  logger.info('🤖 ╚═══════════════════════════════════════════╝');
   logger.info(`📞 Total de chamadas: ${stats.totalCalls}`);
   logger.info(`✅ Chamadas bem-sucedidas: ${stats.successfulCalls}`);
   logger.info(`❌ Chamadas falhadas: ${stats.failedCalls}`);
@@ -302,7 +303,7 @@ function showAPIStats() {
     logger.info(`   Tentativa: ${stats.lastError.attempt}`);
   }
   
-  logger.info('🤖 ═══════════════════════════════════════════\n');
+  logger.info('🤖 ╚═══════════════════════════════════════════╝\n');
 }
 
 /**
@@ -399,7 +400,7 @@ async function loadGroqConfig() {
   return true;
 }
 
-module.exports = {
+export {
   groq,
   callGroqAI,
   loadGroqConfig,

@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * prospectService.js
  * Lógica de prospecção para o bot OmniWA
@@ -7,11 +8,16 @@
  * - Responder perguntas comuns de interessados
  */
 
-const groqClient = require('../ai/groqClient');
-const ragEngine = require('../ai/ragEngine');
-const logger = require('../utils/logger');
-const fs = require('fs').promises;
-const path = require('path');
+import groqClient from '../ai/groqClient.js';
+import ragEngine from '../ai/ragEngine.js';
+import logger from '../utils/logger.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Cache do prompt de prospecção
 let prospectPromptCache = null;
@@ -238,11 +244,11 @@ function getStageGuidance(stage, prospectData = {}) {
 
     conversion: {
       focus: 'Garantir sucesso na implementação',
-      support: [
-        'Acompanhar progresso do setup',
-        'Responder dúvidas técnicas',
-        'Oferecer ajuda com integrações',
-        'Agendar follow-up pós-cadastro',
+      actions: [
+        'Acompanhar setup passo a passo',
+        'Resolver dúvidas técnicas',
+        'Garantir primeira venda bem-sucedida',
+        'Solicitar feedback',
       ],
       objective: 'Ativar e reter novo cliente',
     },
@@ -473,12 +479,12 @@ function getRecommendationByScore(classification) {
   return recommendations[classification] || recommendations.cold;
 }
 
-module.exports = {
+export {
   handleProspectMessage,
   identifyProspectStage,
   getStageGuidance,
   extractProspectData,
   getQuickResponse,
   formatProspectResponse,
-  scoreProspect,
+  scoreProspect
 };

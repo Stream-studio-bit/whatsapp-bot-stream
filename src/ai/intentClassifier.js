@@ -1,6 +1,7 @@
+// Convertido para ES Modules
 // src/ai/intentClassifier.js
 
-const logger = require('../utils/logger');
+import logger from '../utils/logger.js';
 
 /**
  * Classificador de Intenções
@@ -256,7 +257,12 @@ function getDetailedClassification(messageText) {
   }
 }
 
-module.exports = {
+export {
+  classifyIntent,
+  getDetailedClassification
+};
+
+export default {
   classifyIntent,
   getDetailedClassification
 };

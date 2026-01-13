@@ -1,11 +1,12 @@
+// Convertido para ES Modules
 /**
  * baileys.js
  * Configuração das opções de conexão do WhatsApp via Baileys
  * Define parâmetros de timeout, reconexão, logs e comportamento do socket
  */
 
-const { DisconnectReason } = require('@whiskeysockets/baileys');
-const logger = require('../utils/logger');
+import { DisconnectReason } from '@whiskeysockets/baileys';
+import logger from '../utils/logger.js';
 
 /**
  * Opções de configuração do Baileys
@@ -130,11 +131,11 @@ function getDisconnectMessage(reason) {
   return errorMessages[reason] || `Desconectado. Motivo: ${reason}`;
 }
 
-module.exports = {
+export {
   baileysConfig,
   getBaileysSocketConfig,
   shouldReconnect,
   getReconnectDelay,
   getDisconnectMessage,
-  DisconnectReason,
+  DisconnectReason
 };

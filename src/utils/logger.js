@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * logger.js
  * Sistema de logs padronizado para o bot OmniWA
@@ -8,9 +9,9 @@
  * - Persistência opcional em arquivo
  */
 
-const fs = require('fs');
-const path = require('path');
-const util = require('util');
+import fs from 'fs';
+import path from 'path';
+import util from 'util';
 
 // Níveis de log
 const LOG_LEVELS = {
@@ -492,8 +493,18 @@ function dbOperation(operation, table, data = {}) {
   dbLogger.debug(`💾 ${operation} em ${table}`, data);
 }
 
+/**
+ * Função auxiliar para printStats (exportada do index.js)
+ */
+function printStats() {
+  info('📊 ═══════════════════════════════════════');
+  info('📊 ESTATÍSTICAS DO BOT');
+  info('📊 ═══════════════════════════════════════');
+  // Esta função pode ser expandida conforme necessário
+}
+
 // Exporta logger
-module.exports = {
+export {
   configure,
   debug,
   info,
@@ -510,5 +521,27 @@ module.exports = {
   whatsappEvent,
   aiCall,
   dbOperation,
-  LOG_LEVELS,
+  printStats,
+  LOG_LEVELS
+};
+
+export default {
+  configure,
+  debug,
+  info,
+  warn,
+  error,
+  errorWithContext,
+  startOperation,
+  endOperation,
+  measureTime,
+  createContextLogger,
+  structured,
+  cleanOldLogs,
+  getLogStats,
+  whatsappEvent,
+  aiCall,
+  dbOperation,
+  printStats,
+  LOG_LEVELS
 };

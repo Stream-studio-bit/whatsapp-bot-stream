@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 import makeWASocket, { 
   DisconnectReason,
   fetchLatestBaileysVersion
@@ -10,11 +11,12 @@ import { createClient } from '@supabase/supabase-js';
 import NodeCache from 'node-cache';
 import dotenv from 'dotenv';
 
-import { createRequire } from 'module';
 import { useSupabaseAuthState } from './services/supabaseAuthState.js';
-
-const require = createRequire(import.meta.url);
-const { validateGroqConfig } = require('./config/groq.js');
+import { validateGroqConfig } from './config/groq.js';
+import { processMessage } from './controllers/messageController.js';
+import { cleanExpiredBlocks } from './services/supportService.js';
+import { log, printStats } from './utils/logger.js';
+import { keepAlive } from './utils/keepAlive.js';
 
 dotenv.config();
 

@@ -1,3 +1,4 @@
+// Convertido para ES Modules
 /**
  * ⚙️ OmniWA Bot - Configuração de Variáveis de Ambiente
  * 
@@ -8,7 +9,8 @@
  * - Exportar configuração organizada para toda aplicação
  */
 
-require('dotenv').config();
+import dotenv from 'dotenv';
+dotenv.config();
 
 /**
  * Valida se uma variável obrigatória existe
@@ -127,7 +129,7 @@ const server = {
 };
 
 // ================================
-// 🐛 DEBUG E LOGS
+// 🛠 DEBUG E LOGS
 // ================================
 const debug = {
   logLevel: getEnv('LOG_LEVEL', 'info'),
@@ -210,4 +212,4 @@ function validateConfig() {
 validateConfig();
 
 // Exporta configuração
-module.exports = config;
+export default config;
