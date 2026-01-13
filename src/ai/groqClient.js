@@ -6,7 +6,7 @@
  */
 
 import Groq from 'groq-sdk';
-import { groqConfig } from '../../config/groq.js';
+import { groqConfig } from '../config/groq.js';
 import logger from '../utils/logger.js';
 
 // Inicializa o cliente Groq
