@@ -6,13 +6,21 @@
  */
 
 import Groq from 'groq-sdk';
-import { groqConfig } from '../config/groq.js';
+import config from '../config/env.js';  // ✅ CORRIGIDO
 import logger from '../utils/logger.js';
 
 // Inicializa o cliente Groq
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
+
+// Configuração do Groq
+const groqConfig = {
+  model: config.groq.model,
+  temperature: 0.7,
+  maxTokens: 2048,
+  topP: 1,
+};
 
 /**
  * Envia uma mensagem para a IA e retorna a resposta
