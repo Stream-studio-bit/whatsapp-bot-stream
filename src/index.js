@@ -10,8 +10,10 @@ import { createClient } from '@supabase/supabase-js';
 import NodeCache from 'node-cache';
 import dotenv from 'dotenv';
 
-import { validateGroqConfig } from './config/groq.js';
+import groqModule from './config/groq.js';
 import { useSupabaseAuthState } from './services/supabaseAuthState.js';
+
+const { validateGroqConfig } = groqModule;
 
 dotenv.config();
 
