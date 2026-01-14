@@ -13,6 +13,7 @@
 import groqClient from '../ai/groqClient.js';
 import ragEngine from '../ai/ragEngine.js';
 import logger from '../utils/logger.js';
+import supabaseClient from '../database/supabaseClient.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -663,6 +664,42 @@ function formatSupportResponse(response, category) {
   formattedResponse += '\n\n❓ Conseguiu resolver? Precisa de mais alguma ajuda?';
 
   return formattedResponse;
+}
+
+/**
+ * Limpa bloqueios de usuários expirados do Supabase
+ * Remove bloqueios temporários que já expiraram
+ * @returns {Promise<number>} Quantidade de bloqueios removidos
+ */
+export async function cleanExpiredBlocks() {
+  try {
+    logger.debug('🧹 Limpando bloqueios expirados...');
+
+    const now = new Date().toISOString();
+
+    const { data, error } = await supabaseClient
+      .from('user_blocks')
+      .delete()
+      .lt('expires_at', now)
+      .select();
+
+    if (error) {
+      logger.error('❌ Erro ao limpar bloqueios:', error);
+      return 0;
+    }
+
+    const count = data ? data.length : 0;
+    
+    if (count > 0) {
+      logger.info(`✅ ${count} bloqueio(s) expirado(s) removido(s)`);
+    }
+
+    return count;
+
+  } catch (error) {
+    logger.error('❌ Erro ao limpar bloqueios expirados:', error);
+    return 0;
+  }
 }
 
 export {
