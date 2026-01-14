@@ -15,7 +15,7 @@ import { useSupabaseAuthState } from './services/supabaseAuthState.js';
 import { validateGroqConfig } from './config/groq.js';
 import { processMessage } from './controllers/messageController.js';
 import { cleanExpiredBlocks } from './services/supportService.js';
-import { log, printStats } from './utils/logger.js';
+import logger from './utils/logger.js';
 import { keepAlive } from './utils/keepAlive.js';
 
 dotenv.config();
@@ -120,7 +120,7 @@ function setupServer() {
   });
 
   httpServer = app.listen(CONFIG.port, () => {
-    log('SUCCESS', `🌐 Servidor: http://localhost:${CONFIG.port}`);
+    logger.info('🌐 Servidor: http://localhost:${CONFIG.port}');
   });
 }
 
@@ -141,7 +141,7 @@ function isRecentMessage(msg) {
 
 function shouldProcessMessage(msg) {
   // Log inicial
-  log('INFO', `🔎 Analisando: ${JSON.stringify({
+  logger.info(`🔎 Analisando: ${JSON.stringify({
     remoteJid: msg.key?.remoteJid,
     fromMe: msg.key?.fromMe,
     hasMessage: !!msg.message,
@@ -149,26 +149,26 @@ function shouldProcessMessage(msg) {
   })}`);
   
   if (!msg?.key?.remoteJid) {
-    log('WARNING', '❌ Sem remoteJid');
+    logger.warn('❌ Sem remoteJid');
     return false;
   }
   
   const remoteJid = msg.key.remoteJid;
   
   if (remoteJid === 'status@broadcast') {
-    log('INFO', '⭐️ Status broadcast ignorado');
+    logger.info('⭐️ Status broadcast ignorado');
     return false;
   }
   
   // Ignora grupos
   if (remoteJid.endsWith('@g.us')) {
-    log('INFO', '⭐️ Mensagem de grupo ignorada');
+    logger.info('⭐️ Mensagem de grupo ignorada');
     return false;
   }
   
   // Ignora newsletters/canais
   if (remoteJid.endsWith('@newsletter')) {
-    log('INFO', '⭐️ Newsletter ignorado');
+    logger.info('⭐️ Newsletter ignorado');
     return false;
   }
   
@@ -178,38 +178,38 @@ function shouldProcessMessage(msg) {
                      /^\d+@s\.whatsapp\.net$/.test(remoteJid);
   
   if (!isValidChat) {
-    log('WARNING', `❌ RemoteJid inválido: ${remoteJid}`);
+    logger.warn('❌ RemoteJid inválido: ${remoteJid}');
     return false;
   }
   
   if (msg.key.fromMe) {
-    log('INFO', '⭐️ Mensagem própria ignorada');
+    logger.info('⭐️ Mensagem própria ignorada');
     return false;
   }
   
   if (!msg.message) {
-    log('WARNING', '❌ Sem conteúdo de mensagem');
+    logger.warn('❌ Sem conteúdo de mensagem');
     return false;
   }
   
   if (msg.message.reactionMessage) {
-    log('INFO', '⭐️ Reação ignorada');
+    logger.info('⭐️ Reação ignorada');
     return false;
   }
   
   if (msg.message.protocolMessage) {
-    log('INFO', '⭐️ Mensagem de protocolo ignorada');
+    logger.info('⭐️ Mensagem de protocolo ignorada');
     return false;
   }
   
   const msgId = msg.key.id;
   if (processedMsgs.has(msgId)) {
-    log('WARNING', '⭐️ Mensagem já processada');
+    logger.warn('⭐️ Mensagem já processada');
     return false;
   }
   
   if (!isRecentMessage(msg)) {
-    log('INFO', '⭐️ Mensagem antiga ignorada');
+    logger.info('⭐️ Mensagem antiga ignorada');
     return false;
   }
   
@@ -219,28 +219,28 @@ function shouldProcessMessage(msg) {
   if (processedMsgs.size > 1000) {
     const toDelete = Array.from(processedMsgs).slice(0, 500);
     toDelete.forEach(id => processedMsgs.delete(id));
-    log('INFO', '🗑️ Cache de mensagens limpo');
+    logger.info('🗑️ Cache de mensagens limpo');
   }
   
-  log('SUCCESS', '✅ Mensagem válida para processamento!');
+  logger.info('✅ Mensagem válida para processamento!');
   return true;
 }
 
 async function handleMessage(msg) {
-  log('INFO', `🔍 Verificando msg | ID: ${msg.key.id}`);
+  logger.info('🔍 Verificando msg | ID: ${msg.key.id}');
   
   if (!shouldProcessMessage(msg)) {
-    log('WARNING', '⚠️ Mensagem filtrada por shouldProcessMessage');
+    logger.warn('⚠️ Mensagem filtrada por shouldProcessMessage');
     return;
   }
   
-  log('SUCCESS', '✅ Mensagem aprovada! Enviando para processMessage...');
+  logger.info('✅ Mensagem aprovada! Enviando para processMessage...');
   
   try {
     await processMessage(sock, msg);
-    log('SUCCESS', '✅ Mensagem processada com sucesso!');
+    logger.info('✅ Mensagem processada com sucesso!');
   } catch (err) {
-    log('ERROR', `❌ Erro em processMessage: ${err.message}`);
+    logger.error('❌ Erro em processMessage: ${err.message}');
     if (process.env.DEBUG_MODE === 'true') {
       console.error(err);
     }
@@ -253,20 +253,20 @@ async function handleMessage(msg) {
 
 async function connectWhatsApp() {
   if (isConnecting) {
-    log('WARNING', '⚠️ Conexão em andamento...');
+    logger.warn('⚠️ Conexão em andamento...');
     return;
   }
 
   if (sock?.user) {
-    log('WARNING', '⚠️ Já conectado');
+    logger.warn('⚠️ Já conectado');
     return;
   }
 
   if (reconnectAttempts >= CONFIG.maxReconnects) {
-    log('ERROR', `❌ Máximo de ${CONFIG.maxReconnects} tentativas atingido`);
+    logger.error('❌ Máximo de ${CONFIG.maxReconnects} tentativas atingido');
     setTimeout(() => {
       reconnectAttempts = 0;
-      log('INFO', '🔄 Contadores resetados');
+      logger.info('🔄 Contadores resetados');
     }, 15 * 60 * 1000);
     return;
   }
@@ -275,12 +275,12 @@ async function connectWhatsApp() {
   reconnectAttempts++;
 
   try {
-    log('INFO', `🔄 Conectando (${reconnectAttempts}/${CONFIG.maxReconnects})...`);
+    logger.info('🔄 Conectando (${reconnectAttempts}/${CONFIG.maxReconnects})...');
 
     // Conecta Supabase
     if (!supabase) {
       supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.anonKey);
-      log('SUCCESS', '✅ Supabase conectado');
+      logger.info('✅ Supabase conectado');
     }
 
     // Busca versão do Baileys
@@ -288,10 +288,10 @@ async function connectWhatsApp() {
     try {
       const versionData = await fetchLatestBaileysVersion();
       version = versionData.version;
-      log('SUCCESS', `✅ Baileys v${version.join('.')}`);
+      logger.info(`✅ Baileys v${version.join('.')}`);
     } catch (err) {
       version = [2, 3000, 1015901307];
-      log('WARNING', '⚠️ Usando versão fixa do Baileys');
+      logger.warn('⚠️ Usando versão fixa do Baileys');
     }
 
     // Auth state
@@ -329,7 +329,7 @@ async function connectWhatsApp() {
       // QR Code
       if (qr) {
         qrCode = qr;
-        log('INFO', '📱 QR Code disponível em /qr');
+        logger.info('📱 QR Code disponível em /qr');
         return;
       }
 
@@ -339,11 +339,11 @@ async function connectWhatsApp() {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
-        log('WARNING', `⚠️ Desconectado (código: ${statusCode || 'desconhecido'})`);
+        logger.warn('⚠️ Desconectado (código: ${statusCode || desconhecido})');
 
         // Logout
         if (statusCode === DisconnectReason.loggedOut) {
-          log('ERROR', '❌ Logout detectado - limpando sessão');
+          logger.error('❌ Logout detectado - limpando sessão');
           await clearAll();
           process.exit(0);
           return;
@@ -351,7 +351,7 @@ async function connectWhatsApp() {
 
         // Credenciais inválidas
         if (statusCode === 401 || statusCode === 405) {
-          log('ERROR', `❌ Erro ${statusCode}: Sessão inválida - limpando...`);
+          logger.error('❌ Erro ${statusCode}: Sessão inválida - limpando...');
           await clearAll();
           reconnectAttempts = 0;
           isConnecting = false;
@@ -371,7 +371,7 @@ async function connectWhatsApp() {
         qrCode = null;
         reconnectAttempts = 0;
 
-        log('SUCCESS', '✅ CONECTADO AO WHATSAPP!');
+        logger.info('✅ CONECTADO AO WHATSAPP!');
         console.log('\n🎉 ┌────────────────────────────────┐');
         console.log('🎉 │ BOT ONLINE E FUNCIONANDO!     │');
         console.log('🎉 └────────────────────────────────┘\n');
@@ -382,19 +382,19 @@ async function connectWhatsApp() {
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-      log('INFO', `📨 Evento messages.upsert | Tipo: ${m.type} | Msgs: ${m.messages.length}`);
+      logger.info('📨 Evento messages.upsert | Tipo: ${m.type} | Msgs: ${m.messages.length}');
       
       if (m.type !== 'notify') {
-        log('WARNING', `⚠️ Tipo ignorado: ${m.type}`);
+        logger.warn('⚠️ Tipo ignorado: ${m.type}');
         return;
       }
       
       for (const msg of m.messages) {
         try {
-          log('INFO', `📥 Processando msg de: ${msg.key.remoteJid}`);
+          logger.info('📥 Processando msg de: ${msg.key.remoteJid}');
           await handleMessage(msg);
         } catch (err) {
-          log('ERROR', `❌ Erro ao processar msg: ${err.message}`);
+          logger.error('❌ Erro ao processar msg: ${err.message}');
         }
       }
     });
@@ -403,7 +403,7 @@ async function connectWhatsApp() {
 
   } catch (error) {
     isConnecting = false;
-    log('ERROR', `❌ Erro na conexão: ${error.message}`);
+    logger.error('❌ Erro na conexão: ${error.message}');
     setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
   }
 }
@@ -418,7 +418,7 @@ function startPeriodicTasks() {
     try {
       await cleanExpiredBlocks();
     } catch (err) {
-      log('ERROR', `Erro ao limpar bloqueios: ${err.message}`);
+      logger.error('Erro ao limpar bloqueios: ${err.message}');
     }
   }, 5 * 60 * 1000);
 }
@@ -437,7 +437,7 @@ function setupConsoleCommands() {
         break;
 
       case 'reconnect':
-        log('INFO', '🔄 Reconectando...');
+        logger.info('🔄 Reconectando...');
         reconnectAttempts = 0;
         if (sock) {
           sock.ws?.close();
@@ -459,9 +459,9 @@ function setupConsoleCommands() {
               .remove([`${CONFIG.sessionId}/session.json`]);
             
             if (error) throw error;
-            log('SUCCESS', '✅ Sessão limpa! Reinicie o bot.');
+            logger.info('✅ Sessão limpa! Reinicie o bot.');
           } catch (err) {
-            log('ERROR', `Erro: ${err.message}`);
+            logger.error('Erro: ${err.message}');
           }
         }
         break;
@@ -496,14 +496,14 @@ function setupConsoleCommands() {
 
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
-    log('WARNING', `⚠️ Rejection: ${err?.message}`);
+    logger.warn('⚠️ Rejection: ${err?.message}');
   }
 });
 
 process.on('uncaughtException', (err) => {
-  log('ERROR', `❌ Exception: ${err?.message}`);
+  logger.error('❌ Exception: ${err?.message}');
   if (String(err?.message || '').includes('Connection')) {
-    log('INFO', '🔄 Erro de conexão - tentando reconectar...');
+    logger.info('🔄 Erro de conexão - tentando reconectar...');
     setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
   } else {
     process.exit(1);
@@ -519,16 +519,16 @@ async function shutdown() {
 
   if (httpServer) {
     httpServer.close();
-    log('INFO', '✅ Servidor HTTP encerrado');
+    logger.info('✅ Servidor HTTP encerrado');
   }
 
   if (sock) {
     sock.ws?.close();
     sock = null;
-    log('INFO', '✅ Socket destruído');
+    logger.info('✅ Socket destruído');
   }
 
-  log('SUCCESS', '👋 Bot encerrado com sucesso!');
+  logger.info('👋 Bot encerrado com sucesso!');
   process.exit(0);
 }
 
@@ -559,13 +559,13 @@ async function start() {
     setupConsoleCommands();
     keepAlive();
 
-    log('INFO', '🚀 Iniciando conexão...');
+    logger.info('🚀 Iniciando conexão...');
     await connectWhatsApp();
 
-    log('SUCCESS', '✅ Bot iniciado com sucesso!');
+    logger.info('✅ Bot iniciado com sucesso!');
 
   } catch (error) {
-    log('ERROR', `❌ Erro fatal: ${error.message}`);
+    logger.error('❌ Erro fatal: ${error.message}');
     process.exit(1);
   }
 }
