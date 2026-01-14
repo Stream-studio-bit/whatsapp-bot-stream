@@ -58,9 +58,9 @@ const BOT_START_TIME = Date.now();
 
 function showBanner() {
   console.clear();
-  console.log('\x1b[36m╔═══════════════════════════════════════╗\x1b[0m');
+  console.log('\x1b[36m╔═══════════════════════════════════╗\x1b[0m');
   console.log('\x1b[36m║   🤖 WHATSAPP BOT - STREAM STUDIO 🤖  ║\x1b[0m');
-  console.log('\x1b[36m╚═══════════════════════════════════════╝\x1b[0m\n');
+  console.log('\x1b[36m╚═══════════════════════════════════╝\x1b[0m\n');
   console.log(`📱 Bot: ${CONFIG.botName}`);
   console.log(`👤 Owner: ${CONFIG.ownerName}`);
   console.log(`🌐 Platform: Docker + Supabase\n`);
@@ -89,27 +89,41 @@ function setupServer() {
       return res.send(`
         <html><body style="font-family:Arial;text-align:center;padding:50px;">
           <h1>⏳ Aguardando QR Code...</h1>
+          <p>O QR Code será gerado em instantes...</p>
           <script>setTimeout(() => location.reload(), 3000);</script>
         </body></html>
       `);
     }
 
-    const qrImage = await QRCode.toDataURL(qrCode);
-    res.send(`
-      <html><body style="font-family:Arial;text-align:center;padding:20px;">
-        <h1 style="color:#25D366;">📱 Escaneie o QR Code</h1>
-        <img src="${qrImage}" style="border:3px solid #25D366;border-radius:10px;"/>
-        <p>Expira em 60 segundos</p>
-        <script>setTimeout(() => location.reload(), 5000);</script>
-      </body></html>
-    `);
+    try {
+      const qrImage = await QRCode.toDataURL(qrCode);
+      res.send(`
+        <html><body style="font-family:Arial;text-align:center;padding:20px;">
+          <h1 style="color:#25D366;">📱 Escaneie o QR Code</h1>
+          <img src="${qrImage}" style="border:3px solid #25D366;border-radius:10px;max-width:400px;"/>
+          <p style="margin-top:20px;">Expira em 60 segundos</p>
+          <p style="color:#666;">Atualizando automaticamente...</p>
+          <script>setTimeout(() => location.reload(), 5000);</script>
+        </body></html>
+      `);
+    } catch (error) {
+      logger.error('❌ Erro ao gerar QR Code:', error);
+      res.send(`
+        <html><body style="font-family:Arial;text-align:center;padding:50px;">
+          <h1 style="color:#f44;">❌ Erro ao gerar QR Code</h1>
+          <p>Tente novamente em alguns instantes...</p>
+          <script>setTimeout(() => location.reload(), 3000);</script>
+        </body></html>
+      `);
+    }
   });
 
   app.get('/health', (req, res) => {
     res.json({
       status: 'online',
       connected: !!(sock?.user),
-      uptime: Math.floor(process.uptime())
+      uptime: Math.floor(process.uptime()),
+      hasQrCode: !!qrCode
     });
   });
 
@@ -120,7 +134,7 @@ function setupServer() {
   });
 
   httpServer = app.listen(CONFIG.port, () => {
-    logger.info('🌐 Servidor: http://localhost:${CONFIG.port}');
+    logger.info(`🌐 Servidor: http://localhost:${CONFIG.port}`);
   });
 }
 
@@ -178,7 +192,7 @@ function shouldProcessMessage(msg) {
                      /^\d+@s\.whatsapp\.net$/.test(remoteJid);
   
   if (!isValidChat) {
-    logger.warn('❌ RemoteJid inválido: ${remoteJid}');
+    logger.warn(`❌ RemoteJid inválido: ${remoteJid}`);
     return false;
   }
   
@@ -227,7 +241,7 @@ function shouldProcessMessage(msg) {
 }
 
 async function handleMessage(msg) {
-  logger.info('🔍 Verificando msg | ID: ${msg.key.id}');
+  logger.info(`📝 Verificando msg | ID: ${msg.key.id}`);
   
   if (!shouldProcessMessage(msg)) {
     logger.warn('⚠️ Mensagem filtrada por shouldProcessMessage');
@@ -240,7 +254,7 @@ async function handleMessage(msg) {
     await processMessage(sock, msg);
     logger.info('✅ Mensagem processada com sucesso!');
   } catch (err) {
-    logger.error('❌ Erro em processMessage: ${err.message}');
+    logger.error(`❌ Erro em processMessage: ${err.message}`);
     if (process.env.DEBUG_MODE === 'true') {
       console.error(err);
     }
@@ -263,7 +277,7 @@ async function connectWhatsApp() {
   }
 
   if (reconnectAttempts >= CONFIG.maxReconnects) {
-    logger.error('❌ Máximo de ${CONFIG.maxReconnects} tentativas atingido');
+    logger.error(`❌ Máximo de ${CONFIG.maxReconnects} tentativas atingido`);
     setTimeout(() => {
       reconnectAttempts = 0;
       logger.info('🔄 Contadores resetados');
@@ -275,7 +289,7 @@ async function connectWhatsApp() {
   reconnectAttempts++;
 
   try {
-    logger.info('🔄 Conectando (${reconnectAttempts}/${CONFIG.maxReconnects})...');
+    logger.info(`🔄 Conectando (${reconnectAttempts}/${CONFIG.maxReconnects})...`);
 
     // Conecta Supabase
     if (!supabase) {
@@ -326,10 +340,12 @@ async function connectWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // QR Code
+      // QR Code - CORRIGIDO
       if (qr) {
-        qrCode = qr;
-        logger.info('📱 QR Code disponível em /qr');
+        qrCode = qr; // ✅ Atualiza variável global
+        logger.info('📱 QR Code gerado e disponível em /qr');
+        console.log('🔍 QR Code armazenado com sucesso!');
+        console.log(`🔗 Acesse: https://whatsapp-bot-stream.onrender.com/qr`);
         return;
       }
 
@@ -339,7 +355,7 @@ async function connectWhatsApp() {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
-        logger.warn('⚠️ Desconectado (código: ${statusCode || desconhecido})');
+        logger.warn(`⚠️ Desconectado (código: ${statusCode || 'desconhecido'})`);
 
         // Logout
         if (statusCode === DisconnectReason.loggedOut) {
@@ -351,7 +367,7 @@ async function connectWhatsApp() {
 
         // Credenciais inválidas
         if (statusCode === 401 || statusCode === 405) {
-          logger.error('❌ Erro ${statusCode}: Sessão inválida - limpando...');
+          logger.error(`❌ Erro ${statusCode}: Sessão inválida - limpando...`);
           await clearAll();
           reconnectAttempts = 0;
           isConnecting = false;
@@ -368,7 +384,7 @@ async function connectWhatsApp() {
       // Conectado
       if (connection === 'open') {
         isConnecting = false;
-        qrCode = null;
+        qrCode = null; // ✅ Limpa QR Code ao conectar
         reconnectAttempts = 0;
 
         logger.info('✅ CONECTADO AO WHATSAPP!');
@@ -382,19 +398,19 @@ async function connectWhatsApp() {
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-      logger.info('📨 Evento messages.upsert | Tipo: ${m.type} | Msgs: ${m.messages.length}');
+      logger.info(`📨 Evento messages.upsert | Tipo: ${m.type} | Msgs: ${m.messages.length}`);
       
       if (m.type !== 'notify') {
-        logger.warn('⚠️ Tipo ignorado: ${m.type}');
+        logger.warn(`⚠️ Tipo ignorado: ${m.type}`);
         return;
       }
       
       for (const msg of m.messages) {
         try {
-          logger.info('📥 Processando msg de: ${msg.key.remoteJid}');
+          logger.info(`📥 Processando msg de: ${msg.key.remoteJid}`);
           await handleMessage(msg);
         } catch (err) {
-          logger.error('❌ Erro ao processar msg: ${err.message}');
+          logger.error(`❌ Erro ao processar msg: ${err.message}`);
         }
       }
     });
@@ -403,7 +419,7 @@ async function connectWhatsApp() {
 
   } catch (error) {
     isConnecting = false;
-    logger.error('❌ Erro na conexão: ${error.message}');
+    logger.error(`❌ Erro na conexão: ${error.message}`);
     setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
   }
 }
@@ -418,9 +434,22 @@ function startPeriodicTasks() {
     try {
       await cleanExpiredBlocks();
     } catch (err) {
-      logger.error('Erro ao limpar bloqueios: ${err.message}');
+      logger.error(`Erro ao limpar bloqueios: ${err.message}`);
     }
   }, 5 * 60 * 1000);
+}
+
+// ==========================================
+// PRINT STATS
+// ==========================================
+
+function printStats() {
+  logger.info('📊 ╔═══════════════════════════════════╗');
+  logger.info('📊 ║  ESTATÍSTICAS DO BOT             ║');
+  logger.info('📊 ╚═══════════════════════════════════╝');
+  logger.info(`📊 Conectado: ${!!(sock?.user)}`);
+  logger.info(`📊 Mensagens processadas: ${processedMsgs.size}`);
+  logger.info(`📊 Uptime: ${Math.floor(process.uptime())}s`);
 }
 
 // ==========================================
@@ -461,7 +490,7 @@ function setupConsoleCommands() {
             if (error) throw error;
             logger.info('✅ Sessão limpa! Reinicie o bot.');
           } catch (err) {
-            logger.error('Erro: ${err.message}');
+            logger.error(`Erro: ${err.message}`);
           }
         }
         break;
@@ -496,12 +525,12 @@ function setupConsoleCommands() {
 
 process.on('unhandledRejection', (err) => {
   if (process.env.DEBUG_MODE === 'true') {
-    logger.warn('⚠️ Rejection: ${err?.message}');
+    logger.warn(`⚠️ Rejection: ${err?.message}`);
   }
 });
 
 process.on('uncaughtException', (err) => {
-  logger.error('❌ Exception: ${err?.message}');
+  logger.error(`❌ Exception: ${err?.message}`);
   if (String(err?.message || '').includes('Connection')) {
     logger.info('🔄 Erro de conexão - tentando reconectar...');
     setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
@@ -565,7 +594,7 @@ async function start() {
     logger.info('✅ Bot iniciado com sucesso!');
 
   } catch (error) {
-    logger.error('❌ Erro fatal: ${error.message}');
+    logger.error(`❌ Erro fatal: ${error.message}`);
     process.exit(1);
   }
 }
