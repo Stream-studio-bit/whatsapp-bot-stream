@@ -34,7 +34,9 @@ const CONFIG = {
   ownerName: process.env.OWNER_NAME || 'Roberto',
   port: process.env.PORT || 3000,
   maxReconnects: 5,
-  reconnectDelay: 5000
+  reconnectDelay: 5000,
+  // ✅ NOVO: Força limpeza de sessão
+  forceNewSession: process.env.FORCE_NEW_SESSION === 'true'
 };
 
 // ==========================================
@@ -45,9 +47,10 @@ let sock = null;
 let supabase = null;
 let httpServer = null;
 let qrCode = null;
-let qrCodeExpiry = null; // ✅ NOVO: Controla expiração do QR
+let qrCodeExpiry = null;
 let reconnectAttempts = 0;
 let isConnecting = false;
+let connectionState = 'disconnected'; // ✅ NOVO: Rastreia estado real
 
 const msgRetryCache = new NodeCache();
 const processedMsgs = new Set();
@@ -68,7 +71,7 @@ function showBanner() {
 }
 
 // ==========================================
-// SERVIDOR HTTP + QR CODE (CORRIGIDO)
+// SERVIDOR HTTP + QR CODE
 // ==========================================
 
 function setupServer() {
@@ -77,8 +80,8 @@ function setupServer() {
   const app = express();
 
   app.get('/qr', async (req, res) => {
-    // ✅ Bot já conectado
-    if (sock?.user) {
+    // Bot conectado
+    if (sock?.user && connectionState === 'open') {
       return res.send(`
         <html>
           <head>
@@ -90,138 +93,195 @@ function setupServer() {
             <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
               <h1 style="color:#25D366;">✅ Bot Conectado!</h1>
               <p style="font-size:18px;color:#555;">Número: <strong>${sock.user.id.split(':')[0]}</strong></p>
-              <p style="color:#888;margin-top:20px;">O bot está online e funcionando corretamente.</p>
-            </div>
-          </body>
-        </html>
-      `);
-    }
-
-    // ✅ QR Code expirado ou não gerado ainda
-    if (!qrCode || (qrCodeExpiry && Date.now() > qrCodeExpiry)) {
-      return res.send(`
-        <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Aguardando QR Code</title>
-          </head>
-          <body style="font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;">
-            <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
-              <h1 style="color:#FFA500;">⏳ Aguardando QR Code...</h1>
-              <div style="margin:30px 0;">
-                <div class="spinner" style="border:4px solid #f3f3f3;border-top:4px solid #25D366;border-radius:50%;width:50px;height:50px;animation:spin 1s linear infinite;margin:0 auto;"></div>
+              <p style="color:#888;margin-top:20px;">O bot está online e funcionando.</p>
+              <div style="margin-top:30px;">
+                <a href="/clearsession" style="background:#dc3545;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">🗑️ Limpar Sessão</a>
               </div>
-              <p style="color:#555;">O QR Code será gerado em instantes...</p>
-              <p style="color:#888;font-size:14px;margin-top:20px;">Página será atualizada automaticamente</p>
             </div>
-            <style>
-              @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-              }
-            </style>
-            <script>setTimeout(() => location.reload(), 3000);</script>
           </body>
         </html>
       `);
     }
 
-    // ✅ Exibe QR Code válido
+    // QR Code válido disponível
+    if (qrCode && (!qrCodeExpiry || Date.now() < qrCodeExpiry)) {
+      try {
+        const qrImage = await QRCode.toDataURL(qrCode);
+        const timeLeft = qrCodeExpiry ? Math.max(0, Math.floor((qrCodeExpiry - Date.now()) / 1000)) : 60;
+        
+        return res.send(`
+          <html>
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Escanear QR Code</title>
+            </head>
+            <body style="font-family:Arial;text-align:center;padding:20px;background:#f0f0f0;">
+              <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
+                <h1 style="color:#25D366;">📱 Escaneie o QR Code</h1>
+                <img src="${qrImage}" 
+                     style="border:3px solid #25D366;border-radius:10px;max-width:100%;height:auto;margin:20px 0;"/>
+                <div style="margin:20px 0;">
+                  <p style="font-size:18px;color:#555;">Tempo restante: <strong id="timer">${timeLeft}s</strong></p>
+                  <div style="background:#eee;height:8px;border-radius:4px;overflow:hidden;margin-top:10px;">
+                    <div id="progress" style="background:#25D366;height:100%;width:${(timeLeft/60)*100}%;transition:width 1s linear;"></div>
+                  </div>
+                </div>
+                <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+                <div style="text-align:left;padding:20px;background:#f9f9f9;border-radius:8px;">
+                  <h3 style="margin-top:0;color:#333;">📋 Instruções:</h3>
+                  <ol style="color:#666;line-height:1.8;">
+                    <li>Abra o <strong>WhatsApp</strong> no celular</li>
+                    <li>Toque em <strong>Menu (⋮)</strong> → <strong>Aparelhos conectados</strong></li>
+                    <li>Toque em <strong>Conectar um aparelho</strong></li>
+                    <li>Aponte a câmera para este QR Code</li>
+                  </ol>
+                </div>
+                <p style="color:#888;font-size:14px;margin-top:20px;">Página atualiza automaticamente</p>
+              </div>
+              <script>
+                let timeLeft = ${timeLeft};
+                const timer = document.getElementById('timer');
+                const progress = document.getElementById('progress');
+                
+                const interval = setInterval(() => {
+                  timeLeft--;
+                  if (timeLeft < 0) {
+                    clearInterval(interval);
+                    location.reload();
+                    return;
+                  }
+                  timer.textContent = timeLeft + 's';
+                  progress.style.width = ((timeLeft / 60) * 100) + '%';
+                }, 1000);
+                
+                setTimeout(() => location.reload(), 5000);
+              </script>
+            </body>
+          </html>
+        `);
+      } catch (error) {
+        logger.error('❌ Erro ao gerar QR Code:', error);
+      }
+    }
+
+    // Aguardando QR Code
+    return res.send(`
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Aguardando QR Code</title>
+        </head>
+        <body style="font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;">
+          <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
+            <h1 style="color:#FFA500;">⏳ Aguardando QR Code...</h1>
+            <div style="margin:30px 0;">
+              <div class="spinner" style="border:4px solid #f3f3f3;border-top:4px solid #25D366;border-radius:50%;width:50px;height:50px;animation:spin 1s linear infinite;margin:0 auto;"></div>
+            </div>
+            <p style="color:#555;">Estado: <strong>${connectionState}</strong></p>
+            <p style="color:#666;font-size:14px;">O QR Code aparecerá em instantes...</p>
+            <div style="margin-top:30px;">
+              <a href="/clearsession" style="background:#dc3545;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;">🗑️ Limpar Sessão</a>
+            </div>
+          </div>
+          <style>
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          </style>
+          <script>setTimeout(() => location.reload(), 3000);</script>
+        </body>
+      </html>
+    `);
+  });
+
+  // ✅ NOVO: Endpoint para limpar sessão via navegador
+  app.get('/clearsession', async (req, res) => {
     try {
-      const qrImage = await QRCode.toDataURL(qrCode);
-      const timeLeft = qrCodeExpiry ? Math.max(0, Math.floor((qrCodeExpiry - Date.now()) / 1000)) : 60;
+      logger.info('🗑️ Limpando sessão via web...');
       
+      if (sock) {
+        try {
+          await sock.logout();
+        } catch (e) {
+          logger.warn('Erro ao fazer logout:', e.message);
+        }
+        sock.ws?.close();
+        sock = null;
+      }
+
+      qrCode = null;
+      qrCodeExpiry = null;
+      connectionState = 'disconnected';
+
+      if (supabase) {
+        try {
+          // Limpa do Supabase
+          const { error } = await supabase.storage
+            .from('whatsapp-sessions')
+            .remove([`${CONFIG.sessionId}/creds.json`]);
+          
+          if (!error) {
+            logger.info('✅ Sessão limpa do Supabase');
+          }
+        } catch (e) {
+          logger.warn('Erro ao limpar Supabase:', e.message);
+        }
+      }
+
       res.send(`
         <html>
           <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Escanear QR Code</title>
+            <title>Sessão Limpa</title>
           </head>
-          <body style="font-family:Arial;text-align:center;padding:20px;background:#f0f0f0;">
+          <body style="font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;">
             <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
-              <h1 style="color:#25D366;">📱 Escaneie o QR Code</h1>
-              <img src="${qrImage}" 
-                   style="border:3px solid #25D366;border-radius:10px;max-width:100%;height:auto;margin:20px 0;"/>
-              <div style="margin:20px 0;">
-                <p style="font-size:18px;color:#555;">Tempo restante: <strong id="timer">${timeLeft}s</strong></p>
-                <div style="background:#eee;height:8px;border-radius:4px;overflow:hidden;margin-top:10px;">
-                  <div id="progress" style="background:#25D366;height:100%;width:100%;transition:width 1s linear;"></div>
-                </div>
-              </div>
-              <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
-              <div style="text-align:left;padding:20px;background:#f9f9f9;border-radius:8px;">
-                <h3 style="margin-top:0;color:#333;">📋 Instruções:</h3>
-                <ol style="color:#666;line-height:1.8;">
-                  <li>Abra o <strong>WhatsApp</strong> no seu celular</li>
-                  <li>Toque em <strong>Menu</strong> (⋮) → <strong>Aparelhos conectados</strong></li>
-                  <li>Toque em <strong>Conectar um aparelho</strong></li>
-                  <li>Aponte seu celular para esta tela</li>
-                </ol>
-              </div>
-              <p style="color:#888;font-size:14px;margin-top:20px;">Atualizando automaticamente...</p>
+              <h1 style="color:#25D366;">✅ Sessão Limpa!</h1>
+              <p style="color:#555;">A sessão foi removida com sucesso.</p>
+              <p style="color:#666;font-size:14px;margin-top:20px;">O bot está reconectando...</p>
+              <a href="/qr" style="background:#25D366;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;display:inline-block;margin-top:20px;">📱 Ver QR Code</a>
             </div>
             <script>
-              let timeLeft = ${timeLeft};
-              const timer = document.getElementById('timer');
-              const progress = document.getElementById('progress');
-              
-              const interval = setInterval(() => {
-                timeLeft--;
-                timer.textContent = timeLeft + 's';
-                progress.style.width = ((timeLeft / 60) * 100) + '%';
-                
-                if (timeLeft <= 0) {
-                  clearInterval(interval);
-                  location.reload();
-                }
-              }, 1000);
-              
-              // Atualiza a cada 5 segundos para pegar novo QR se necessário
-              setTimeout(() => location.reload(), 5000);
+              setTimeout(() => {
+                window.location.href = '/qr';
+              }, 3000);
             </script>
           </body>
         </html>
       `);
+
+      // Reconecta após 2 segundos
+      setTimeout(() => {
+        reconnectAttempts = 0;
+        connectWhatsApp();
+      }, 2000);
+
     } catch (error) {
-      logger.error('❌ Erro ao gerar QR Code:', error);
-      res.send(`
-        <html>
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Erro</title>
-          </head>
-          <body style="font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;">
-            <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
-              <h1 style="color:#f44;">❌ Erro ao gerar QR Code</h1>
-              <p style="color:#666;">Tente novamente em alguns instantes...</p>
-              <button onclick="location.reload()" 
-                      style="background:#25D366;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;cursor:pointer;margin-top:20px;">
-                🔄 Recarregar
-              </button>
-            </div>
-            <script>setTimeout(() => location.reload(), 3000);</script>
-          </body>
-        </html>
-      `);
+      logger.error('Erro ao limpar sessão:', error);
+      res.status(500).send('Erro ao limpar sessão');
     }
   });
 
   app.get('/health', (req, res) => {
     res.json({
       status: 'online',
-      connected: !!(sock?.user),
+      connected: connectionState === 'open',
+      connectionState,
       uptime: Math.floor(process.uptime()),
       hasQrCode: !!qrCode,
-      qrCodeExpired: qrCodeExpiry ? Date.now() > qrCodeExpiry : false
+      qrCodeValid: !!(qrCode && (!qrCodeExpiry || Date.now() < qrCodeExpiry))
     });
   });
 
   app.get('/', (req, res) => {
-    const status = sock?.user ? '✅ Online' : '🔴 Offline';
-    const link = !sock?.user ? '<br><br><a href="/qr" style="background:#25D366;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;display:inline-block;margin-top:10px;">📱 Ver QR Code</a>' : '';
+    const status = connectionState === 'open' ? '✅ Online' : '🔴 Offline';
+    const stateText = connectionState;
+    const link = connectionState !== 'open' ? '<br><br><a href="/qr" style="background:#25D366;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;display:inline-block;margin-top:10px;">📱 Ver QR Code</a>' : '';
+    
     res.send(`
       <html>
         <head>
@@ -232,7 +292,8 @@ function setupServer() {
         <body style="font-family:Arial;text-align:center;padding:50px;background:#f0f0f0;">
           <div style="background:white;padding:40px;border-radius:15px;box-shadow:0 4px 6px rgba(0,0,0,0.1);max-width:500px;margin:0 auto;">
             <h1 style="color:#333;">${CONFIG.botName}</h1>
-            <p style="font-size:20px;margin:20px 0;">Status: <strong style="color:${sock?.user ? '#25D366' : '#f44'}">${status}</strong></p>
+            <p style="font-size:20px;margin:20px 0;">Status: <strong style="color:${connectionState === 'open' ? '#25D366' : '#f44'}">${status}</strong></p>
+            <p style="font-size:14px;color:#888;">Estado: ${stateText}</p>
             ${link}
           </div>
         </body>
@@ -262,119 +323,59 @@ function isRecentMessage(msg) {
 }
 
 function shouldProcessMessage(msg) {
-  logger.info(`🔎 Analisando: ${JSON.stringify({
-    remoteJid: msg.key?.remoteJid,
-    fromMe: msg.key?.fromMe,
-    hasMessage: !!msg.message,
-    msgId: msg.key?.id
-  })}`);
-  
-  if (!msg?.key?.remoteJid) {
-    logger.warn('❌ Sem remoteJid');
-    return false;
-  }
+  if (!msg?.key?.remoteJid) return false;
   
   const remoteJid = msg.key.remoteJid;
   
-  if (remoteJid === 'status@broadcast') {
-    logger.info('⭐️ Status broadcast ignorado');
-    return false;
-  }
-  
-  if (remoteJid.endsWith('@g.us')) {
-    logger.info('⭐️ Mensagem de grupo ignorada');
-    return false;
-  }
-  
-  if (remoteJid.endsWith('@newsletter')) {
-    logger.info('⭐️ Newsletter ignorado');
-    return false;
-  }
+  if (remoteJid === 'status@broadcast') return false;
+  if (remoteJid.endsWith('@g.us')) return false;
+  if (remoteJid.endsWith('@newsletter')) return false;
   
   const isValidChat = remoteJid.endsWith('@s.whatsapp.net') || 
                      remoteJid.endsWith('@lid') ||
                      /^\d+@s\.whatsapp\.net$/.test(remoteJid);
   
-  if (!isValidChat) {
-    logger.warn(`❌ RemoteJid inválido: ${remoteJid}`);
-    return false;
-  }
-  
-  if (msg.key.fromMe) {
-    logger.info('⭐️ Mensagem própria ignorada');
-    return false;
-  }
-  
-  if (!msg.message) {
-    logger.warn('❌ Sem conteúdo de mensagem');
-    return false;
-  }
-  
-  if (msg.message.reactionMessage) {
-    logger.info('⭐️ Reação ignorada');
-    return false;
-  }
-  
-  if (msg.message.protocolMessage) {
-    logger.info('⭐️ Mensagem de protocolo ignorada');
-    return false;
-  }
+  if (!isValidChat) return false;
+  if (msg.key.fromMe) return false;
+  if (!msg.message) return false;
+  if (msg.message.reactionMessage) return false;
+  if (msg.message.protocolMessage) return false;
   
   const msgId = msg.key.id;
-  if (processedMsgs.has(msgId)) {
-    logger.warn('⭐️ Mensagem já processada');
-    return false;
-  }
-  
-  if (!isRecentMessage(msg)) {
-    logger.info('⭐️ Mensagem antiga ignorada');
-    return false;
-  }
+  if (processedMsgs.has(msgId)) return false;
+  if (!isRecentMessage(msg)) return false;
   
   processedMsgs.add(msgId);
   
   if (processedMsgs.size > 1000) {
     const toDelete = Array.from(processedMsgs).slice(0, 500);
     toDelete.forEach(id => processedMsgs.delete(id));
-    logger.info('🗑️ Cache de mensagens limpo');
   }
   
-  logger.info('✅ Mensagem válida para processamento!');
   return true;
 }
 
 async function handleMessage(msg) {
-  logger.info(`📝 Verificando msg | ID: ${msg.key.id}`);
-  
-  if (!shouldProcessMessage(msg)) {
-    logger.warn('⚠️ Mensagem filtrada por shouldProcessMessage');
-    return;
-  }
-  
-  logger.info('✅ Mensagem aprovada! Enviando para processMessage...');
+  if (!shouldProcessMessage(msg)) return;
   
   try {
     await processMessage(sock, msg);
-    logger.info('✅ Mensagem processada com sucesso!');
   } catch (err) {
     logger.error(`❌ Erro em processMessage: ${err.message}`);
-    if (process.env.DEBUG_MODE === 'true') {
-      console.error(err);
-    }
   }
 }
 
 // ==========================================
-// CONEXÃO WHATSAPP (CORRIGIDO)
+// CONEXÃO WHATSAPP
 // ==========================================
 
 async function connectWhatsApp() {
   if (isConnecting) {
-    logger.warn('⚠️ Conexão em andamento...');
+    logger.warn('⚠️ Conexão já em andamento');
     return;
   }
 
-  if (sock?.user) {
+  if (sock?.user && connectionState === 'open') {
     logger.warn('⚠️ Já conectado');
     return;
   }
@@ -383,7 +384,8 @@ async function connectWhatsApp() {
     logger.error(`❌ Máximo de ${CONFIG.maxReconnects} tentativas atingido`);
     setTimeout(() => {
       reconnectAttempts = 0;
-      logger.info('🔄 Contadores resetados');
+      logger.info('🔄 Contadores resetados - tentando novamente');
+      connectWhatsApp();
     }, 15 * 60 * 1000);
     return;
   }
@@ -399,20 +401,49 @@ async function connectWhatsApp() {
       logger.info('✅ Supabase conectado');
     }
 
+    // ✅ Busca versão mais recente
     let version;
     try {
       const versionData = await fetchLatestBaileysVersion();
       version = versionData.version;
       logger.info(`✅ Baileys v${version.join('.')}`);
     } catch (err) {
-      version = [2, 3000, 1015901307];
-      logger.warn('⚠️ Usando versão fixa do Baileys');
+      logger.warn('⚠️ Erro ao buscar versão, usando fallback');
+      version = undefined; // Deixa o Baileys escolher
+    }
+
+    // ✅ Limpa sessão se forçado
+    if (CONFIG.forceNewSession || reconnectAttempts === 1) {
+      logger.info('🗑️ Verificando sessão existente...');
+      try {
+        const { data } = await supabase.storage
+          .from('whatsapp-sessions')
+          .list(CONFIG.sessionId);
+        
+        if (data && data.length > 0) {
+          logger.warn('⚠️ Sessão antiga encontrada - limpando...');
+          await supabase.storage
+            .from('whatsapp-sessions')
+            .remove([`${CONFIG.sessionId}/creds.json`]);
+          logger.info('✅ Sessão antiga removida');
+        }
+      } catch (e) {
+        logger.warn('Erro ao verificar sessão:', e.message);
+      }
     }
 
     const { state, saveCreds, clearAll } = await useSupabaseAuthState(
       supabase,
       CONFIG.sessionId
     );
+
+    // ✅ Verifica se tem credenciais válidas
+    const hasCreds = state?.creds?.me?.id;
+    if (hasCreds) {
+      logger.info('📂 Credenciais encontradas - tentando conectar automaticamente');
+    } else {
+      logger.info('🆕 Nenhuma credencial - gerando QR Code');
+    }
 
     sock = makeWASocket({
       version,
@@ -431,7 +462,7 @@ async function connectWhatsApp() {
     });
 
     // ==========================================
-    // EVENTOS (CORRIGIDO)
+    // EVENTOS
     // ==========================================
 
     sock.ev.on('creds.update', saveCreds);
@@ -439,52 +470,74 @@ async function connectWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // ✅ QR Code - CORRIGIDO
+      logger.info(`🔄 connection.update: ${JSON.stringify({ connection, hasQr: !!qr })}`);
+
+      // ✅ QR Code gerado
       if (qr) {
+        connectionState = 'qr';
         qrCode = qr;
-        qrCodeExpiry = Date.now() + 60000; // Expira em 60 segundos
+        qrCodeExpiry = Date.now() + 60000;
         
-        logger.info('📱 QR Code gerado e disponível em /qr');
+        logger.info('📱 QR Code GERADO com sucesso!');
         console.log('\n┌─────────────────────────────────────┐');
-        console.log('│  📱 NOVO QR CODE GERADO!           │');
+        console.log('│  📱 NOVO QR CODE DISPONÍVEL!       │');
         console.log('└─────────────────────────────────────┘');
         console.log(`🔗 Acesse: https://whatsapp-bot-stream.onrender.com/qr`);
         console.log(`⏰ Válido por: 60 segundos\n`);
-        
-        // ⚠️ NÃO FAZ RETURN AQUI - permite processar outros estados
       }
 
-      // Desconexão
+      // Conectando
+      if (connection === 'connecting') {
+        connectionState = 'connecting';
+        logger.info('🔄 Conectando ao WhatsApp...');
+      }
+
+      // Desconectado
       if (connection === 'close') {
+        connectionState = 'close';
         const statusCode = lastDisconnect?.error instanceof Boom
           ? lastDisconnect.error.output?.statusCode
           : null;
 
         logger.warn(`⚠️ Desconectado (código: ${statusCode || 'desconhecido'})`);
 
-        // Logout
+        // Logout - limpa tudo
         if (statusCode === DisconnectReason.loggedOut) {
           logger.error('❌ Logout detectado - limpando sessão');
           qrCode = null;
           qrCodeExpiry = null;
           await clearAll();
-          process.exit(0);
+          
+          // Aguarda antes de reconectar
+          setTimeout(() => {
+            reconnectAttempts = 0;
+            isConnecting = false;
+            connectWhatsApp();
+          }, 3000);
           return;
         }
 
-        // Credenciais inválidas
+        // Erro 401/405 - sessão inválida
         if (statusCode === 401 || statusCode === 405) {
-          logger.error(`❌ Erro ${statusCode}: Sessão inválida - limpando...`);
+          logger.error(`❌ Erro ${statusCode}: Sessão inválida - limpando`);
           qrCode = null;
           qrCodeExpiry = null;
-          await clearAll();
+          
+          try {
+            await clearAll();
+            logger.info('✅ Sessão limpa');
+          } catch (e) {
+            logger.warn('Erro ao limpar:', e.message);
+          }
+          
           reconnectAttempts = 0;
           isConnecting = false;
+          
           setTimeout(() => connectWhatsApp(), 3000);
           return;
         }
 
-        // Reconecta
+        // Outros erros - reconecta
         qrCode = null;
         qrCodeExpiry = null;
         isConnecting = false;
@@ -492,8 +545,9 @@ async function connectWhatsApp() {
         return;
       }
 
-      // ✅ Conectado
+      // ✅ Conectado com sucesso
       if (connection === 'open') {
+        connectionState = 'open';
         isConnecting = false;
         qrCode = null;
         qrCodeExpiry = null;
@@ -510,16 +564,10 @@ async function connectWhatsApp() {
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-      logger.info(`📨 Evento messages.upsert | Tipo: ${m.type} | Msgs: ${m.messages.length}`);
-      
-      if (m.type !== 'notify') {
-        logger.warn(`⚠️ Tipo ignorado: ${m.type}`);
-        return;
-      }
+      if (m.type !== 'notify') return;
       
       for (const msg of m.messages) {
         try {
-          logger.info(`📥 Processando msg de: ${msg.key.remoteJid}`);
           await handleMessage(msg);
         } catch (err) {
           logger.error(`❌ Erro ao processar msg: ${err.message}`);
@@ -531,7 +579,13 @@ async function connectWhatsApp() {
 
   } catch (error) {
     isConnecting = false;
+    connectionState = 'error';
     logger.error(`❌ Erro na conexão: ${error.message}`);
+    
+    // Limpa QR Code em caso de erro
+    qrCode = null;
+    qrCodeExpiry = null;
+    
     setTimeout(() => connectWhatsApp(), CONFIG.reconnectDelay);
   }
 }
@@ -558,7 +612,8 @@ function printStats() {
   logger.info('📊 ╔═══════════════════════════════════╗');
   logger.info('📊 ║  ESTATÍSTICAS DO BOT             ║');
   logger.info('📊 ╚═══════════════════════════════════╝');
-  logger.info(`📊 Conectado: ${!!(sock?.user)}`);
+  logger.info(`📊 Conectado: ${connectionState === 'open'}`);
+  logger.info(`📊 Estado: ${connectionState}`);
   logger.info(`📊 Mensagens processadas: ${processedMsgs.size}`);
   logger.info(`📊 Uptime: ${Math.floor(process.uptime())}s`);
 }
@@ -585,6 +640,7 @@ function setupConsoleCommands() {
         }
         qrCode = null;
         qrCodeExpiry = null;
+        connectionState = 'disconnected';
         setTimeout(() => connectWhatsApp(), 1000);
         break;
 
@@ -594,29 +650,42 @@ function setupConsoleCommands() {
         break;
 
       case 'clearsession':
+        logger.info('🗑️ Limpando sessão...');
+        if (sock) {
+          try {
+            await sock.logout();
+          } catch (e) {}
+          sock.ws?.close();
+          sock = null;
+        }
+        
         if (supabase) {
           try {
-            const { error } = await supabase.storage
+            await supabase.storage
               .from('whatsapp-sessions')
-              .remove([`${CONFIG.sessionId}/session.json`]);
-            
-            if (error) throw error;
-            logger.info('✅ Sessão limpa! Reinicie o bot.');
-            qrCode = null;
-            qrCodeExpiry = null;
+              .remove([`${CONFIG.sessionId}/creds.json`]);
+            logger.info('✅ Sessão limpa! Reiniciando...');
           } catch (err) {
             logger.error(`Erro: ${err.message}`);
           }
         }
+        
+        qrCode = null;
+        qrCodeExpiry = null;
+        connectionState = 'disconnected';
+        reconnectAttempts = 0;
+        
+        setTimeout(() => connectWhatsApp(), 2000);
         break;
 
       case 'status':
         console.log('\n📊 STATUS:');
-        console.log(`   Conectado: ${!!(sock?.user)}`);
+        console.log(`   Conectado: ${connectionState === 'open'}`);
+        console.log(`   Estado: ${connectionState}`);
         console.log(`   Reconexões: ${reconnectAttempts}`);
+        console.log(`   QR Code ativo: ${!!qrCode && (!qrCodeExpiry || Date.now() < qrCodeExpiry)}`);
         console.log(`   Mensagens processadas: ${processedMsgs.size}`);
-        console.log(`   Uptime: ${Math.floor(process.uptime())}s`);
-        console.log(`   QR Code ativo: ${!!qrCode && (!qrCodeExpiry || Date.now() < qrCodeExpiry)}\n`);
+        console.log(`   Uptime: ${Math.floor(process.uptime())}s\n`);
         break;
 
       case 'help':
@@ -625,7 +694,7 @@ function setupConsoleCommands() {
         console.log('   reconnect    - Reconectar');
         console.log('   clear        - Limpar tela');
         console.log('   clearsession - Limpar sessão');
-        console.log('   status       - Status atual');
+        console.log('   status       - Status detalhado');
         console.log('   help         - Ajuda\n');
         break;
 
