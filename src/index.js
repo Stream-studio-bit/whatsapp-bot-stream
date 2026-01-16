@@ -115,10 +115,62 @@ async function startBot() {
   })
 }
 
-/* =========================
-   START
-========================= */
+let sock = null
+let isStarting = false
 
-app.listen(PORT, () => {
-  startBot()
-})
+async function startBot() {
+  if (isStarting || sock) return
+  isStarting = true
+
+  if (!fs.existsSync(SESSION_PATH)) {
+    fs.mkdirSync(SESSION_PATH, { recursive: true })
+  }
+
+  if (FORCE_NEW_SESSION) {
+    fs.rmSync(SESSION_PATH, { recursive: true, force: true })
+    fs.mkdirSync(SESSION_PATH, { recursive: true })
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
+  const { version } = await fetchLatestBaileysVersion()
+
+  sock = makeWASocket({
+    version,
+    auth: state,
+    browser: ['Bot', 'Chrome', '1.0'],
+    connectTimeoutMs: 60_000,
+    defaultQueryTimeoutMs: 60_000,
+    keepAliveIntervalMs: 30_000
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      qrCode = qr
+      qrExpiry = Date.now() + 60000
+      status = 'qr'
+      return
+    }
+
+    if (connection === 'open') {
+      status = 'connected'
+      qrCode = null
+      qrExpiry = null
+      reconnects = 0
+      isStarting = false
+      return
+    }
+
+    if (connection === 'close') {
+      const reason = lastDisconnect?.error?.output?.statusCode
+      sock = null
+      isStarting = false
+
+      if (reason !== DisconnectReason.loggedOut && reconnects < MAX_RECONNECTS) {
+        reconnects++
+        setTimeout(startBot, 5000)
+      }
+    }
+  })
+}
