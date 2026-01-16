@@ -15,21 +15,18 @@ const PORT = process.env.PORT || 3000
    CONFIG
 ========================= */
 
-const CONFIG = {
-  forceNewSession: process.env.FORCE_NEW_SESSION === 'true',
-  sessionPath: './auth',
-  maxReconnects: 5
-}
+const SESSION_PATH = './auth'
+const FORCE_NEW_SESSION = process.env.FORCE_NEW_SESSION === 'true'
+const MAX_RECONNECTS = 5
 
 /* =========================
    ESTADO
 ========================= */
 
-let sock
 let qrCode = null
 let qrExpiry = null
-let reconnects = 0
 let status = 'init'
+let reconnects = 0
 
 /* =========================
    ROTAS
@@ -65,17 +62,23 @@ app.get('/qr', async (_, res) => {
 ========================= */
 
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState(CONFIG.sessionPath)
-  const { version } = await fetchLatestBaileysVersion()
-
-  if (CONFIG.forceNewSession && fs.existsSync(CONFIG.sessionPath)) {
-    fs.rmSync(CONFIG.sessionPath, { recursive: true, force: true })
+  // ✅ GARANTE QUE O DIRETÓRIO EXISTE
+  if (!fs.existsSync(SESSION_PATH)) {
+    fs.mkdirSync(SESSION_PATH, { recursive: true })
   }
 
-  sock = makeWASocket({
+  // ✅ LIMPA SESSÃO SOMENTE SE FORÇADO
+  if (FORCE_NEW_SESSION && fs.existsSync(SESSION_PATH)) {
+    fs.rmSync(SESSION_PATH, { recursive: true, force: true })
+    fs.mkdirSync(SESSION_PATH, { recursive: true })
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
+  const { version } = await fetchLatestBaileysVersion()
+
+  const sock = makeWASocket({
     version,
     auth: state,
-    printQRInTerminal: true,
     browser: ['Bot', 'Chrome', '1.0']
   })
 
@@ -103,7 +106,7 @@ async function startBot() {
 
       if (
         reason !== DisconnectReason.loggedOut &&
-        reconnects < CONFIG.maxReconnects
+        reconnects < MAX_RECONNECTS
       ) {
         reconnects++
         setTimeout(startBot, 3000)
