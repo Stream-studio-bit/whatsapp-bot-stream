@@ -22,20 +22,17 @@ const PORT = process.env.PORT || 3000
 const SESSION_PATH = './auth'
 const FORCE_NEW_SESSION = process.env.FORCE_NEW_SESSION === 'true'
 const MAX_RECONNECTS = 15
+const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
-// Logger configurado
+// Logger CORRIGIDO - sem transport em produção
 const logger = pino({ 
-  level: process.env.LOG_LEVEL || 'silent',
-  transport: {
-    target: 'pino-pretty',
-    options: { colorize: true }
-  }
+  level: process.env.LOG_LEVEL || 'silent'
 })
 
 // Cache para mensagens (essencial para evitar erro 515)
 const msgRetryCounterCache = new NodeCache({ 
-  stdTTL: 86400, // 24 horas
-  checkperiod: 600 // Check a cada 10 minutos
+  stdTTL: 86400,
+  checkperiod: 600
 })
 
 /* =========================
@@ -237,8 +234,8 @@ app.get('/', (_, res) => {
             <span class="info-value">${hours}h ${minutes}m ${seconds}s</span>
           </div>
           <div class="info-row">
-            <span class="info-label">Node:</span>
-            <span class="info-value">${process.version}</span>
+            <span class="info-label">Ambiente:</span>
+            <span class="info-value">${IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'}</span>
           </div>
         </div>
       </div>
@@ -257,7 +254,8 @@ app.get('/health', (_, res) => {
     connected: status === 'connected',
     node: process.version,
     memory: process.memoryUsage(),
-    lastDisconnect: lastDisconnectTime
+    lastDisconnect: lastDisconnectTime,
+    environment: IS_PRODUCTION ? 'production' : 'development'
   })
 })
 
@@ -405,7 +403,6 @@ app.get('/qr', async (_, res) => {
           }
         }, 1000);
         
-        // Backup reload
         setTimeout(() => location.reload(), ${expirySeconds * 1000 + 1000});
       </script>
     </head>
@@ -510,16 +507,15 @@ async function startBot() {
   console.log(`\n${'='.repeat(50)}`)
   console.log(`🚀 Tentativa de conexão #${connectionAttempts}`)
   console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
+  console.log(`🌍 Ambiente: ${IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'}`)
   console.log('='.repeat(50))
 
   try {
-    // Cria diretório se não existir
     if (!fs.existsSync(SESSION_PATH)) {
       console.log('📁 Criando diretório de sessão...')
       fs.mkdirSync(SESSION_PATH, { recursive: true })
     }
 
-    // Limpa sessão apenas na primeira tentativa se forçado
     if (FORCE_NEW_SESSION && connectionAttempts === 1) {
       console.log('🗑️ Limpando sessão anterior (FORCE_NEW_SESSION=true)...')
       if (fs.existsSync(SESSION_PATH)) {
@@ -545,9 +541,9 @@ async function startBot() {
       browser: Browsers.ubuntu('Chrome'),
       msgRetryCounterCache,
       
-      // Timeouts otimizados para evitar erro 515
+      // Timeouts otimizados
       connectTimeoutMs: 60_000,
-      defaultQueryTimeoutMs: undefined, // Importante!
+      defaultQueryTimeoutMs: undefined,
       keepAliveIntervalMs: 10_000,
       retryRequestDelayMs: 250,
       maxMsgRetryCount: 5,
@@ -560,17 +556,15 @@ async function startBot() {
       markOnlineOnConnect: true,
       shouldSyncHistoryMessage: () => false,
       
-      // Desabilita verificação MAC (pode causar erro 515)
+      // Desabilita verificação MAC
       appStateMacVerification: {
         patch: false,
         snapshot: false
       },
       
-      // Configurações adicionais
       getMessage: async () => undefined
     })
 
-    // Salva credenciais
     sock.ev.on('creds.update', async () => {
       try {
         await saveCreds()
@@ -580,7 +574,6 @@ async function startBot() {
       }
     })
 
-    // Monitor de mensagens
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type === 'notify') {
         for (const msg of messages) {
@@ -592,7 +585,6 @@ async function startBot() {
       }
     })
 
-    // Monitor de conexão
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
@@ -601,7 +593,7 @@ async function startBot() {
         qrExpiry = Date.now() + 60000
         status = 'qr'
         console.log('📱 ✅ QR Code gerado!')
-        console.log(`🔗 Acesse: http://localhost:${PORT}/qr`)
+        console.log(`🔗 Acesse: ${IS_PRODUCTION ? 'https://seu-app.onrender.com' : 'http://localhost:' + PORT}/qr`)
         return
       }
 
@@ -645,8 +637,6 @@ async function startBot() {
         isStarting = false
         
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
-
-        // Códigos críticos que exigem reset de sessão
         const criticalErrorCodes = [515, 440, 428, 401, 500]
         const shouldResetSession = criticalErrorCodes.includes(statusCode) && reconnects < 3
 
@@ -716,12 +706,11 @@ app.listen(PORT, () => {
   console.log(`  🔄 Restart:   http://localhost:${PORT}/restart`)
   console.log('')
   console.log('  📦 Node:      ' + process.version)
-  console.log('  🔧 Mode:      ' + (process.env.NODE_ENV || 'production'))
+  console.log('  🔧 Ambiente:  ' + (IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'))
   console.log('')
   console.log('═'.repeat(50))
   console.log('')
   
-  // Inicia o bot após 2 segundos
   setTimeout(startBot, 2000)
 })
 
