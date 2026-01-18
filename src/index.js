@@ -27,6 +27,8 @@ let qrCode = null
 let qrExpiry = null
 let status = 'init'
 let reconnects = 0
+let sock = null
+let isStarting = false
 
 /* =========================
    ROTAS
@@ -62,115 +64,87 @@ app.get('/qr', async (_, res) => {
 ========================= */
 
 async function startBot() {
-  // ✅ GARANTE QUE O DIRETÓRIO EXISTE
-  if (!fs.existsSync(SESSION_PATH)) {
-    fs.mkdirSync(SESSION_PATH, { recursive: true })
-  }
-
-  // ✅ LIMPA SESSÃO SOMENTE SE FORÇADO
-  if (FORCE_NEW_SESSION && fs.existsSync(SESSION_PATH)) {
-    fs.rmSync(SESSION_PATH, { recursive: true, force: true })
-    fs.mkdirSync(SESSION_PATH, { recursive: true })
-  }
-
-  const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
-  const { version } = await fetchLatestBaileysVersion()
-
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    browser: ['Bot', 'Chrome', '1.0']
-  })
-
-  sock.ev.on('creds.update', saveCreds)
-
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      qrCode = qr
-      qrExpiry = Date.now() + 60000
-      status = 'qr'
-    }
-
-    if (connection === 'open') {
-      status = 'connected'
-      reconnects = 0
-      qrCode = null
-      qrExpiry = null
-    }
-
-    if (connection === 'close') {
-      status = 'disconnected'
-
-      const reason =
-        lastDisconnect?.error?.output?.statusCode
-
-      if (
-        reason !== DisconnectReason.loggedOut &&
-        reconnects < MAX_RECONNECTS
-      ) {
-        reconnects++
-        setTimeout(startBot, 3000)
-      }
-    }
-  })
-}
-
-let sock = null
-let isStarting = false
-
-async function startBot() {
   if (isStarting || sock) return
   isStarting = true
 
-  if (!fs.existsSync(SESSION_PATH)) {
-    fs.mkdirSync(SESSION_PATH, { recursive: true })
-  }
-
-  if (FORCE_NEW_SESSION) {
-    fs.rmSync(SESSION_PATH, { recursive: true, force: true })
-    fs.mkdirSync(SESSION_PATH, { recursive: true })
-  }
-
-  const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
-  const { version } = await fetchLatestBaileysVersion()
-
-  sock = makeWASocket({
-    version,
-    auth: state,
-    browser: ['Bot', 'Chrome', '1.0'],
-    connectTimeoutMs: 60_000,
-    defaultQueryTimeoutMs: 60_000,
-    keepAliveIntervalMs: 30_000
-  })
-
-  sock.ev.on('creds.update', saveCreds)
-
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      qrCode = qr
-      qrExpiry = Date.now() + 60000
-      status = 'qr'
-      return
+  try {
+    // Garante que o diretório existe
+    if (!fs.existsSync(SESSION_PATH)) {
+      fs.mkdirSync(SESSION_PATH, { recursive: true })
     }
 
-    if (connection === 'open') {
-      status = 'connected'
-      qrCode = null
-      qrExpiry = null
-      reconnects = 0
-      isStarting = false
-      return
+    // Limpa sessão somente se forçado
+    if (FORCE_NEW_SESSION) {
+      fs.rmSync(SESSION_PATH, { recursive: true, force: true })
+      fs.mkdirSync(SESSION_PATH, { recursive: true })
     }
 
-    if (connection === 'close') {
-      const reason = lastDisconnect?.error?.output?.statusCode
-      sock = null
-      isStarting = false
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
+    const { version } = await fetchLatestBaileysVersion()
 
-      if (reason !== DisconnectReason.loggedOut && reconnects < MAX_RECONNECTS) {
-        reconnects++
-        setTimeout(startBot, 5000)
+    sock = makeWASocket({
+      version,
+      auth: state,
+      browser: ['Bot', 'Chrome', '1.0'],
+      connectTimeoutMs: 60_000,
+      defaultQueryTimeoutMs: 60_000,
+      keepAliveIntervalMs: 30_000
+    })
+
+    sock.ev.on('creds.update', saveCreds)
+
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        qrCode = qr
+        qrExpiry = Date.now() + 60000
+        status = 'qr'
+        console.log('QR Code gerado')
+        return
       }
+
+      if (connection === 'open') {
+        status = 'connected'
+        qrCode = null
+        qrExpiry = null
+        reconnects = 0
+        isStarting = false
+        console.log('✅ Conectado ao WhatsApp')
+        return
+      }
+
+      if (connection === 'close') {
+        const reason = lastDisconnect?.error?.output?.statusCode
+        sock = null
+        isStarting = false
+
+        console.log('Desconectado. Razão:', reason)
+
+        if (reason !== DisconnectReason.loggedOut && reconnects < MAX_RECONNECTS) {
+          reconnects++
+          console.log(`Tentando reconectar (${reconnects}/${MAX_RECONNECTS})...`)
+          setTimeout(startBot, 5000)
+        } else {
+          status = 'disconnected'
+        }
+      }
+    })
+  } catch (error) {
+    console.error('Erro ao iniciar bot:', error)
+    isStarting = false
+    sock = null
+    
+    if (reconnects < MAX_RECONNECTS) {
+      reconnects++
+      setTimeout(startBot, 5000)
     }
-  })
+  }
 }
+
+/* =========================
+   SERVIDOR
+========================= */
+
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando na porta ${PORT}`)
+  startBot()
+})
