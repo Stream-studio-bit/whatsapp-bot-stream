@@ -6,9 +6,11 @@ import {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore
+  makeCacheableSignalKeyStore,
+  Browsers
 } from '@whiskeysockets/baileys'
 import pino from 'pino'
+import NodeCache from 'node-cache'
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -19,10 +21,22 @@ const PORT = process.env.PORT || 3000
 
 const SESSION_PATH = './auth'
 const FORCE_NEW_SESSION = process.env.FORCE_NEW_SESSION === 'true'
-const MAX_RECONNECTS = 10
+const MAX_RECONNECTS = 15
 
-// Logger silencioso
-const logger = pino({ level: 'silent' })
+// Logger configurado
+const logger = pino({ 
+  level: process.env.LOG_LEVEL || 'silent',
+  transport: {
+    target: 'pino-pretty',
+    options: { colorize: true }
+  }
+})
+
+// Cache para mensagens (essencial para evitar erro 515)
+const msgRetryCounterCache = new NodeCache({ 
+  stdTTL: 86400, // 24 horas
+  checkperiod: 600 // Check a cada 10 minutos
+})
 
 /* =========================
    ESTADO
@@ -34,30 +48,200 @@ let status = 'init'
 let reconnects = 0
 let sock = null
 let isStarting = false
+let connectionAttempts = 0
+let lastDisconnectTime = null
+
+/* =========================
+   UTILITÁRIOS
+========================= */
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function getStatusEmoji(currentStatus) {
+  const emojis = {
+    'init': '🔄',
+    'connecting': '⚡',
+    'qr': '📱',
+    'connected': '✅',
+    'disconnected': '❌',
+    'reconnecting': '🔄',
+    'error': '⚠️',
+    'logged_out': '🚪',
+    'stopped': '🛑'
+  }
+  return emojis[currentStatus] || '❓'
+}
 
 /* =========================
    ROTAS
 ========================= */
 
 app.get('/', (_, res) => {
+  const uptime = Math.floor(process.uptime())
+  const hours = Math.floor(uptime / 3600)
+  const minutes = Math.floor((uptime % 3600) / 60)
+  const seconds = uptime % 60
+  
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
-      <title>WhatsApp Bot Status</title>
+      <meta http-equiv="refresh" content="5">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>WhatsApp Bot - Stream Studio</title>
       <style>
-        body { font-family: Arial; padding: 20px; text-align: center; }
-        .status { font-size: 24px; margin: 20px 0; }
-        .connected { color: green; }
-        .qr { color: orange; }
-        .disconnected { color: red; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+          font-family: 'Segoe UI', Arial, sans-serif; 
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+        .container {
+          background: white;
+          padding: 40px;
+          border-radius: 20px;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+          max-width: 500px;
+          width: 100%;
+          animation: fadeIn 0.5s;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        h1 { 
+          color: #333; 
+          margin-bottom: 10px;
+          font-size: 28px;
+        }
+        .subtitle {
+          color: #666;
+          font-size: 14px;
+          margin-bottom: 30px;
+        }
+        .status { 
+          font-size: 32px; 
+          margin: 30px 0;
+          font-weight: bold;
+          padding: 20px;
+          border-radius: 10px;
+          background: #f8f9fa;
+        }
+        .connected { color: #25D366; background: #d4edda; }
+        .qr { color: #FFA500; background: #fff3cd; }
+        .disconnected, .error { color: #dc3545; background: #f8d7da; }
+        .init, .connecting, .reconnecting { color: #17a2b8; background: #d1ecf1; }
+        .btn {
+          display: inline-block;
+          padding: 15px 30px;
+          margin: 10px 5px;
+          background: #25D366;
+          color: white;
+          text-decoration: none;
+          border-radius: 10px;
+          font-weight: bold;
+          transition: all 0.3s;
+          border: none;
+          cursor: pointer;
+          font-size: 16px;
+        }
+        .btn:hover {
+          background: #128C7E;
+          transform: translateY(-2px);
+          box-shadow: 0 5px 15px rgba(37,211,102,0.3);
+        }
+        .btn.secondary {
+          background: #6c757d;
+        }
+        .btn.secondary:hover {
+          background: #5a6268;
+        }
+        .info {
+          margin-top: 30px;
+          padding: 20px;
+          background: #f8f9fa;
+          border-radius: 10px;
+          font-size: 14px;
+          text-align: left;
+        }
+        .info-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 0;
+          border-bottom: 1px solid #dee2e6;
+        }
+        .info-row:last-child {
+          border-bottom: none;
+        }
+        .info-label {
+          font-weight: bold;
+          color: #495057;
+        }
+        .info-value {
+          color: #6c757d;
+        }
+        .pulse {
+          animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
       </style>
     </head>
     <body>
-      <h1>WhatsApp Bot</h1>
-      <div class="status ${status}">${status === 'connected' ? '✅ Conectado' : status === 'qr' ? '⏳ Aguardando QR Code' : '❌ ' + status}</div>
-      ${status === 'qr' ? '<a href="/qr">Ver QR Code</a>' : ''}
+      <div class="container">
+        <h1>📱 WhatsApp Bot</h1>
+        <div class="subtitle">Stream Studio v2.0</div>
+        
+        <div class="status ${status} ${['connecting', 'reconnecting', 'init'].includes(status) ? 'pulse' : ''}">
+          ${getStatusEmoji(status)} ${
+            status === 'connected' ? 'Conectado' : 
+            status === 'qr' ? 'Aguardando QR Code' : 
+            status === 'connecting' ? 'Conectando...' :
+            status === 'reconnecting' ? 'Reconectando...' :
+            status === 'init' ? 'Inicializando...' :
+            status === 'logged_out' ? 'Desconectado (Logout)' :
+            status.toUpperCase()
+          }
+        </div>
+        
+        <div style="text-align: center;">
+          ${status === 'qr' ? '<a href="/qr" class="btn">📱 Ver QR Code</a>' : ''}
+          <a href="/health" class="btn secondary">📊 Health Check</a>
+          ${status !== 'connected' && status !== 'connecting' ? '<a href="/restart" class="btn secondary">🔄 Restart</a>' : ''}
+        </div>
+        
+        <div class="info">
+          <div class="info-row">
+            <span class="info-label">Status:</span>
+            <span class="info-value">${status}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Tentativas:</span>
+            <span class="info-value">${connectionAttempts}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Reconexões:</span>
+            <span class="info-value">${reconnects}/${MAX_RECONNECTS}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Uptime:</span>
+            <span class="info-value">${hours}h ${minutes}m ${seconds}s</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Node:</span>
+            <span class="info-value">${process.version}</span>
+          </div>
+        </div>
+      </div>
     </body>
     </html>
   `)
@@ -67,7 +251,13 @@ app.get('/health', (_, res) => {
   res.status(200).json({ 
     status: status,
     uptime: process.uptime(),
-    timestamp: new Date().toISOString()
+    reconnects: reconnects,
+    connectionAttempts: connectionAttempts,
+    timestamp: new Date().toISOString(),
+    connected: status === 'connected',
+    node: process.version,
+    memory: process.memoryUsage(),
+    lastDisconnect: lastDisconnectTime
   })
 })
 
@@ -79,15 +269,48 @@ app.get('/qr', async (_, res) => {
       <head>
         <meta charset="UTF-8">
         <meta http-equiv="refresh" content="3">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>QR Code</title>
         <style>
-          body { font-family: Arial; padding: 20px; text-align: center; }
+          body { 
+            font-family: Arial; 
+            padding: 20px; 
+            text-align: center;
+            background: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+          .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+          }
+          .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #25D366;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+          }
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
         </style>
       </head>
       <body>
-        <h2>⏳ QR Code não disponível</h2>
-        <p>Status: ${status}</p>
-        <p>Aguardando... (atualização automática em 3s)</p>
+        <div class="container">
+          <div class="spinner"></div>
+          <h2>⏳ Gerando QR Code...</h2>
+          <p>Status: ${status}</p>
+          <p>Tentativa: ${connectionAttempts}</p>
+          <p><small>Atualização automática em 3s</small></p>
+        </div>
       </body>
       </html>
     `)
@@ -101,69 +324,113 @@ app.get('/qr', async (_, res) => {
     <html>
     <head>
       <meta charset="UTF-8">
-      <title>Escanear QR Code</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Escanear QR Code - WhatsApp Bot</title>
       <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
-          font-family: Arial; 
-          padding: 20px; 
-          text-align: center;
-          background: #f5f5f5;
+          font-family: 'Segoe UI', Arial, sans-serif; 
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
         }
         .container {
           background: white;
-          padding: 30px;
-          border-radius: 10px;
-          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-          max-width: 500px;
-          margin: 0 auto;
+          padding: 40px;
+          border-radius: 20px;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+          max-width: 600px;
+          width: 100%;
         }
+        h1 { color: #333; margin-bottom: 20px; }
         img { 
-          max-width: 300px; 
-          border: 10px solid #25D366;
-          border-radius: 10px;
+          max-width: 100%;
+          height: auto;
+          padding: 20px;
+          background: white;
+          border: 5px solid #25D366;
+          border-radius: 15px;
+          box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         }
         .timer {
-          font-size: 18px;
+          font-size: 24px;
           color: #666;
-          margin: 20px 0;
+          margin: 25px 0;
+          font-weight: bold;
+        }
+        .timer span {
+          color: #25D366;
+          font-size: 32px;
         }
         .instructions {
           text-align: left;
-          margin-top: 20px;
-          padding: 15px;
+          margin-top: 30px;
+          padding: 20px;
           background: #f9f9f9;
-          border-radius: 5px;
+          border-radius: 10px;
+          border-left: 5px solid #25D366;
+        }
+        .instructions h3 {
+          margin-top: 0;
+          color: #25D366;
+        }
+        .instructions ol {
+          line-height: 1.8;
+          padding-left: 20px;
+        }
+        .warning {
+          background: #fff3cd;
+          padding: 15px;
+          border-radius: 10px;
+          margin-top: 20px;
+          border-left: 5px solid #ffc107;
+          font-size: 14px;
         }
       </style>
       <script>
         let seconds = ${expirySeconds};
-        setInterval(() => {
+        const timerElement = document.getElementById('timer');
+        
+        const countdown = setInterval(() => {
           seconds--;
+          if (timerElement) {
+            timerElement.innerText = seconds;
+          }
           if (seconds <= 0) {
+            clearInterval(countdown);
             location.reload();
           }
-          document.getElementById('timer').innerText = seconds;
         }, 1000);
         
-        // Recarrega quando o QR expira
-        setTimeout(() => location.reload(), ${expirySeconds * 1000});
+        // Backup reload
+        setTimeout(() => location.reload(), ${expirySeconds * 1000 + 1000});
       </script>
     </head>
     <body>
       <div class="container">
-        <h1>📱 Escanear QR Code</h1>
-        <img src="${img}" alt="QR Code" />
+        <h1>📱 Conectar WhatsApp Bot</h1>
+        <div style="text-align: center;">
+          <img src="${img}" alt="QR Code WhatsApp" />
+        </div>
         <div class="timer">
           ⏱️ Expira em <span id="timer">${expirySeconds}</span>s
         </div>
         <div class="instructions">
-          <h3>Como conectar:</h3>
+          <h3>📋 Como conectar:</h3>
           <ol>
-            <li>Abra o WhatsApp no seu celular</li>
-            <li>Toque em <strong>Mais opções</strong> (⋮) > <strong>Aparelhos conectados</strong></li>
+            <li>Abra o <strong>WhatsApp</strong> no seu celular</li>
+            <li>Toque em <strong>Mais opções</strong> (⋮) ou <strong>Configurações</strong></li>
+            <li>Selecione <strong>Aparelhos conectados</strong></li>
             <li>Toque em <strong>Conectar um aparelho</strong></li>
-            <li>Aponte seu celular para esta tela para escanear o código</li>
+            <li><strong>Aponte sua câmera</strong> para este QR Code</li>
+            <li>Aguarde a confirmação da conexão</li>
           </ol>
+        </div>
+        <div class="warning">
+          <strong>⚠️ Importante:</strong> Mantenha esta página aberta até que a conexão seja confirmada. O QR Code será renovado automaticamente se expirar.
         </div>
       </div>
     </body>
@@ -171,37 +438,101 @@ app.get('/qr', async (_, res) => {
   `)
 })
 
+app.get('/restart', async (_, res) => {
+  console.log('🔄 Restart solicitado via /restart')
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta http-equiv="refresh" content="3;url=/">
+      <title>Reiniciando...</title>
+      <style>
+        body { 
+          font-family: Arial; 
+          text-align: center; 
+          padding: 50px;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+        }
+        .container {
+          background: white;
+          color: #333;
+          padding: 40px;
+          border-radius: 20px;
+          max-width: 500px;
+          margin: 0 auto;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>🔄 Reiniciando Bot...</h1>
+        <p>Você será redirecionado em 3 segundos...</p>
+      </div>
+    </body>
+    </html>
+  `)
+  
+  if (sock) {
+    sock.end()
+    sock = null
+  }
+  reconnects = 0
+  isStarting = false
+  connectionAttempts = 0
+  setTimeout(startBot, 2000)
+})
+
 /* =========================
    WHATSAPP
 ========================= */
 
 async function startBot() {
-  if (isStarting || sock) {
-    console.log('⚠️ Bot já está iniciando ou conectado')
+  if (isStarting) {
+    console.log('⚠️ Bot já está iniciando, aguarde...')
     return
   }
   
+  if (sock) {
+    console.log('⚠️ Encerrando conexão anterior...')
+    try {
+      sock.end()
+    } catch (err) {
+      console.log('Erro ao encerrar conexão:', err.message)
+    }
+    sock = null
+    await sleep(2000)
+  }
+  
   isStarting = true
-  console.log('🚀 Iniciando bot...')
+  connectionAttempts++
+  console.log(`\n${'='.repeat(50)}`)
+  console.log(`🚀 Tentativa de conexão #${connectionAttempts}`)
+  console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
+  console.log('='.repeat(50))
 
   try {
-    // Garante que o diretório existe
+    // Cria diretório se não existir
     if (!fs.existsSync(SESSION_PATH)) {
       console.log('📁 Criando diretório de sessão...')
       fs.mkdirSync(SESSION_PATH, { recursive: true })
     }
 
-    // Limpa sessão somente se forçado
-    if (FORCE_NEW_SESSION) {
-      console.log('🗑️ Limpando sessão anterior...')
-      fs.rmSync(SESSION_PATH, { recursive: true, force: true })
-      fs.mkdirSync(SESSION_PATH, { recursive: true })
+    // Limpa sessão apenas na primeira tentativa se forçado
+    if (FORCE_NEW_SESSION && connectionAttempts === 1) {
+      console.log('🗑️ Limpando sessão anterior (FORCE_NEW_SESSION=true)...')
+      if (fs.existsSync(SESSION_PATH)) {
+        fs.rmSync(SESSION_PATH, { recursive: true, force: true })
+        fs.mkdirSync(SESSION_PATH, { recursive: true })
+      }
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
     const { version } = await fetchLatestBaileysVersion()
 
     console.log(`📦 Baileys version: ${version.join('.')}`)
+    console.log(`📱 Sessão existente: ${fs.existsSync(`${SESSION_PATH}/creds.json`) ? 'Sim' : 'Não'}`)
 
     sock = makeWASocket({
       version,
@@ -210,29 +541,58 @@ async function startBot() {
         keys: makeCacheableSignalKeyStore(state.keys, logger)
       },
       logger,
-      browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
       printQRInTerminal: false,
+      browser: Browsers.ubuntu('Chrome'),
+      msgRetryCounterCache,
+      
+      // Timeouts otimizados para evitar erro 515
       connectTimeoutMs: 60_000,
-      defaultQueryTimeoutMs: 60_000,
-      keepAliveIntervalMs: 30_000,
-      emitOwnEvents: true,
+      defaultQueryTimeoutMs: undefined, // Importante!
+      keepAliveIntervalMs: 10_000,
+      retryRequestDelayMs: 250,
+      maxMsgRetryCount: 5,
+      
+      // Configurações de conexão
+      emitOwnEvents: false,
+      fireInitQueries: true,
       generateHighQualityLinkPreview: true,
       syncFullHistory: false,
-      markOnlineOnConnect: true
+      markOnlineOnConnect: true,
+      shouldSyncHistoryMessage: () => false,
+      
+      // Desabilita verificação MAC (pode causar erro 515)
+      appStateMacVerification: {
+        patch: false,
+        snapshot: false
+      },
+      
+      // Configurações adicionais
+      getMessage: async () => undefined
     })
 
-    // Salvar credenciais
-    sock.ev.on('creds.update', saveCreds)
-
-    // Eventos de mensagem (para debug)
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-      const msg = messages[0]
-      if (!msg.key.fromMe && msg.message) {
-        console.log('📩 Nova mensagem recebida:', msg.key.remoteJid)
+    // Salva credenciais
+    sock.ev.on('creds.update', async () => {
+      try {
+        await saveCreds()
+        console.log('💾 Credenciais salvas')
+      } catch (err) {
+        console.error('❌ Erro ao salvar credenciais:', err.message)
       }
     })
 
-    // Conexão
+    // Monitor de mensagens
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type === 'notify') {
+        for (const msg of messages) {
+          if (!msg.key.fromMe && msg.message) {
+            const from = msg.key.remoteJid
+            console.log(`📩 Nova mensagem de: ${from}`)
+          }
+        }
+      }
+    })
+
+    // Monitor de conexão
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
@@ -240,7 +600,14 @@ async function startBot() {
         qrCode = qr
         qrExpiry = Date.now() + 60000
         status = 'qr'
-        console.log('📱 QR Code gerado! Acesse /qr para escanear')
+        console.log('📱 ✅ QR Code gerado!')
+        console.log(`🔗 Acesse: http://localhost:${PORT}/qr`)
+        return
+      }
+
+      if (connection === 'connecting') {
+        console.log('🔄 Conectando ao WhatsApp...')
+        status = 'connecting'
         return
       }
 
@@ -250,44 +617,85 @@ async function startBot() {
         qrExpiry = null
         reconnects = 0
         isStarting = false
-        console.log('✅ CONECTADO AO WHATSAPP!')
-        console.log('📱 Número:', sock.user?.id)
+        
+        console.log('\n' + '='.repeat(50))
+        console.log('✅✅✅ CONECTADO AO WHATSAPP! ✅✅✅')
+        console.log('='.repeat(50))
+        console.log(`📱 ID: ${sock.user?.id}`)
+        console.log(`👤 Nome: ${sock.user?.name || 'N/A'}`)
+        console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
+        console.log('='.repeat(50) + '\n')
         return
       }
 
       if (connection === 'close') {
-        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
         const statusCode = lastDisconnect?.error?.output?.statusCode
+        const reason = lastDisconnect?.error?.output?.payload?.error
+        lastDisconnectTime = new Date().toISOString()
         
-        console.log('❌ Conexão fechada. Código:', statusCode)
-        console.log('📊 Motivo:', lastDisconnect?.error?.message || 'Desconhecido')
+        console.log('\n' + '='.repeat(50))
+        console.log('❌ CONEXÃO FECHADA')
+        console.log('='.repeat(50))
+        console.log(`📊 Status Code: ${statusCode}`)
+        console.log(`📊 Motivo: ${reason || lastDisconnect?.error?.message || 'Desconhecido'}`)
+        console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
+        console.log('='.repeat(50))
         
         sock = null
         isStarting = false
-        status = 'disconnected'
+        
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+
+        // Códigos críticos que exigem reset de sessão
+        const criticalErrorCodes = [515, 440, 428, 401, 500]
+        const shouldResetSession = criticalErrorCodes.includes(statusCode) && reconnects < 3
+
+        if (shouldResetSession) {
+          console.log('🔄 Erro crítico detectado, limpando sessão...')
+          try {
+            if (fs.existsSync(SESSION_PATH)) {
+              fs.rmSync(SESSION_PATH, { recursive: true, force: true })
+              await sleep(1000)
+              fs.mkdirSync(SESSION_PATH, { recursive: true })
+              console.log('✅ Sessão limpa com sucesso')
+            }
+          } catch (err) {
+            console.error('❌ Erro ao limpar sessão:', err.message)
+          }
+        }
 
         if (shouldReconnect && reconnects < MAX_RECONNECTS) {
           reconnects++
-          const delay = Math.min(reconnects * 2000, 10000)
-          console.log(`🔄 Reconectando em ${delay/1000}s (tentativa ${reconnects}/${MAX_RECONNECTS})...`)
+          const delay = Math.min(reconnects * 3000, 15000)
+          status = 'reconnecting'
+          console.log(`🔄 Reconectando em ${delay/1000}s (tentativa ${reconnects}/${MAX_RECONNECTS})...\n`)
           setTimeout(startBot, delay)
         } else {
-          console.log('🛑 Não reconectando:', shouldReconnect ? 'Máximo de tentativas atingido' : 'Logout detectado')
-          status = 'stopped'
+          const finalStatus = statusCode === DisconnectReason.loggedOut ? 'logged_out' : 'stopped'
+          status = finalStatus
+          console.log(`🛑 Não reconectando: ${shouldReconnect ? 'Máximo de tentativas atingido' : 'Logout detectado'}`)
+          console.log(`Status final: ${finalStatus}\n`)
         }
       }
     })
 
   } catch (error) {
-    console.error('❌ Erro ao iniciar bot:', error)
+    console.error('\n' + '='.repeat(50))
+    console.error('❌ ERRO AO INICIAR BOT')
+    console.error('='.repeat(50))
+    console.error('Mensagem:', error.message)
+    console.error('Stack:', error.stack)
+    console.error('='.repeat(50) + '\n')
+    
     isStarting = false
     sock = null
     status = 'error'
     
     if (reconnects < MAX_RECONNECTS) {
       reconnects++
-      console.log(`🔄 Tentando novamente em 5s...`)
-      setTimeout(startBot, 5000)
+      const delay = 5000
+      console.log(`🔄 Tentando novamente em ${delay/1000}s...\n`)
+      setTimeout(startBot, delay)
     }
   }
 }
@@ -297,24 +705,39 @@ async function startBot() {
 ========================= */
 
 app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════╗
-║   🤖 WhatsApp Bot Iniciado        ║
-╚════════════════════════════════════╝
+  console.log('\n' + '╔' + '═'.repeat(48) + '╗')
+  console.log('║' + ' '.repeat(10) + '🤖 WhatsApp Bot - Stream Studio' + ' '.repeat(7) + '║')
+  console.log('║' + ' '.repeat(18) + 'v2.0.0' + ' '.repeat(24) + '║')
+  console.log('╚' + '═'.repeat(48) + '╝')
+  console.log('')
+  console.log(`  🌐 Servidor:  http://localhost:${PORT}`)
+  console.log(`  📱 QR Code:   http://localhost:${PORT}/qr`)
+  console.log(`  ❤️  Health:    http://localhost:${PORT}/health`)
+  console.log(`  🔄 Restart:   http://localhost:${PORT}/restart`)
+  console.log('')
+  console.log('  📦 Node:      ' + process.version)
+  console.log('  🔧 Mode:      ' + (process.env.NODE_ENV || 'production'))
+  console.log('')
+  console.log('═'.repeat(50))
+  console.log('')
   
-  🌐 Servidor: http://localhost:${PORT}
-  📱 QR Code: http://localhost:${PORT}/qr
-  ❤️  Health: http://localhost:${PORT}/health
-  
-`)
-  startBot()
+  // Inicia o bot após 2 segundos
+  setTimeout(startBot, 2000)
 })
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n🛑 Desligando bot...')
+const shutdown = async (signal) => {
+  console.log(`\n🛑 ${signal} recebido, desligando gracefully...`)
   if (sock) {
-    await sock.logout()
+    try {
+      await sock.logout()
+      console.log('✅ Logout realizado')
+    } catch (err) {
+      console.log('⚠️ Erro no logout:', err.message)
+    }
   }
   process.exit(0)
-})
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))
