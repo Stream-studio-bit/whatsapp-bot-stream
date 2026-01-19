@@ -1,16 +1,14 @@
 import express from 'express'
 import QRCode from 'qrcode'
-import fs from 'fs'
+import { createClient } from '@supabase/supabase-js'
 import {
   default as makeWASocket,
   DisconnectReason,
-  useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
   Browsers
 } from '@whiskeysockets/baileys'
 import pino from 'pino'
-import NodeCache from 'node-cache'
+import { useSupabaseAuthState } from './supabaseAuthState.js'
 
 const app = express()
 const PORT = process.env.PORT || 3000
@@ -19,19 +17,19 @@ const PORT = process.env.PORT || 3000
    CONFIG
 ========================= */
 
-const SESSION_PATH = './auth'
-const FORCE_NEW_SESSION = process.env.FORCE_NEW_SESSION === 'true'
+const SUPABASE_URL = process.env.SUPABASE_URL
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+const SESSION_ID = process.env.SESSION_ID || 'stream-studio-bot'
 const MAX_RECONNECTS = 20
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
-// Logger configurado
-const logger = pino({ level: 'silent' })
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ ERRO: Variáveis SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórias')
+  process.exit(1)
+}
 
-// Cache para mensagens
-const msgRetryCounterCache = new NodeCache({ 
-  stdTTL: 86400,
-  checkperiod: 600
-})
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+const logger = pino({ level: 'silent' })
 
 /* =========================
    ESTADO
@@ -160,6 +158,12 @@ app.get('/', (_, res) => {
         .btn.secondary:hover {
           background: #5a6268;
         }
+        .btn.danger {
+          background: #dc3545;
+        }
+        .btn.danger:hover {
+          background: #c82333;
+        }
         .info {
           margin-top: 30px;
           padding: 20px;
@@ -204,7 +208,7 @@ app.get('/', (_, res) => {
     <body>
       <div class="container">
         <h1>📱 WhatsApp Bot</h1>
-        <div class="subtitle">Stream Studio v2.0</div>
+        <div class="subtitle">Stream Studio v2.0 + Supabase</div>
         
         <div class="status ${status} ${['connecting', 'reconnecting', 'init'].includes(status) ? 'pulse' : ''}">
           ${getStatusEmoji(status)} ${
@@ -223,6 +227,7 @@ app.get('/', (_, res) => {
           ${status === 'qr' ? '<a href="/qr" class="btn">📱 Ver QR Code</a>' : ''}
           <a href="/health" class="btn secondary">📊 Health Check</a>
           ${status !== 'connected' && status !== 'connecting' ? '<a href="/restart" class="btn secondary">🔄 Restart</a>' : ''}
+          ${status === 'connected' ? '<a href="/logout" class="btn danger">🚪 Logout</a>' : ''}
         </div>
         
         ${lastError ? `<div class="alert"><strong>⚠️ Último erro:</strong> ${lastError}</div>` : ''}
@@ -248,6 +253,10 @@ app.get('/', (_, res) => {
             <span class="info-label">Ambiente:</span>
             <span class="info-value">${IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'}</span>
           </div>
+          <div class="info-row">
+            <span class="info-label">Storage:</span>
+            <span class="info-value">Supabase (${SESSION_ID})</span>
+          </div>
         </div>
       </div>
     </body>
@@ -267,7 +276,9 @@ app.get('/health', (_, res) => {
     memory: process.memoryUsage(),
     lastDisconnect: lastDisconnectTime,
     lastError: lastError,
-    environment: IS_PRODUCTION ? 'production' : 'development'
+    environment: IS_PRODUCTION ? 'production' : 'development',
+    storage: 'supabase',
+    sessionId: SESSION_ID
   })
 })
 
@@ -439,7 +450,7 @@ app.get('/qr', async (_, res) => {
           </ol>
         </div>
         <div class="warning">
-          <strong>⚠️ IMPORTANTE:</strong> Se você já tem outro WhatsApp Web conectado, desconecte-o primeiro. Múltiplas conexões podem causar erro de conflito.
+          <strong>⚠️ IMPORTANTE:</strong> Escaneie apenas uma vez. As credenciais serão salvas no Supabase automaticamente.
         </div>
       </div>
     </body>
@@ -494,6 +505,57 @@ app.get('/restart', async (_, res) => {
   setTimeout(startBot, 2000)
 })
 
+app.get('/logout', async (_, res) => {
+  console.log('🚪 Logout solicitado via /logout')
+  
+  if (!sock) {
+    return res.send('❌ Não conectado')
+  }
+  
+  try {
+    await sock.logout()
+    status = 'logged_out'
+    sock = null
+    
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="refresh" content="3;url=/">
+        <title>Logout</title>
+        <style>
+          body { 
+            font-family: Arial; 
+            text-align: center; 
+            padding: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+          }
+          .container {
+            background: white;
+            color: #333;
+            padding: 40px;
+            border-radius: 20px;
+            max-width: 500px;
+            margin: 0 auto;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>✅ Logout realizado com sucesso</h1>
+          <p>Você será redirecionado em 3 segundos...</p>
+        </div>
+      </body>
+      </html>
+    `)
+  } catch (err) {
+    console.error('❌ Erro no logout:', err.message)
+    res.send('❌ Erro ao fazer logout: ' + err.message)
+  }
+})
+
 /* =========================
    WHATSAPP
 ========================= */
@@ -512,7 +574,7 @@ async function startBot() {
       console.log('Erro ao encerrar conexão:', err.message)
     }
     sock = null
-    await sleep(3000) // Espera mais tempo antes de reconectar
+    await sleep(2000)
   }
   
   isStarting = true
@@ -520,72 +582,38 @@ async function startBot() {
   console.log(`\n${'='.repeat(50)}`)
   console.log(`🚀 Tentativa de conexão #${connectionAttempts}`)
   console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
-  console.log(`🌍 Ambiente: ${IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'}`)
+  console.log(`🌐 Ambiente: ${IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'}`)
+  console.log(`💾 Storage: Supabase (${SESSION_ID})`)
   console.log('='.repeat(50))
 
   try {
-    if (!fs.existsSync(SESSION_PATH)) {
-      console.log('📁 Criando diretório de sessão...')
-      fs.mkdirSync(SESSION_PATH, { recursive: true })
-    }
-
-    if (FORCE_NEW_SESSION && connectionAttempts === 1) {
-      console.log('🗑️ Limpando sessão anterior (FORCE_NEW_SESSION=true)...')
-      if (fs.existsSync(SESSION_PATH)) {
-        fs.rmSync(SESSION_PATH, { recursive: true, force: true })
-        fs.mkdirSync(SESSION_PATH, { recursive: true })
-      }
-    }
-
-    const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
+    const { state, saveCreds } = await useSupabaseAuthState(supabase, SESSION_ID)
     const { version } = await fetchLatestBaileysVersion()
 
     console.log(`📦 Baileys version: ${version.join('.')}`)
-    console.log(`📱 Sessão existente: ${fs.existsSync(`${SESSION_PATH}/creds.json`) ? 'Sim' : 'Não'}`)
+    console.log(`🔐 Credenciais carregadas do Supabase`)
 
     sock = makeWASocket({
       version,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, logger)
-      },
+      auth: state,
       logger,
       printQRInTerminal: false,
       browser: Browsers.ubuntu('Chrome'),
-      msgRetryCounterCache,
       
-      // Timeouts otimizados
       connectTimeoutMs: 60_000,
       defaultQueryTimeoutMs: undefined,
       keepAliveIntervalMs: 10_000,
-      retryRequestDelayMs: 250,
-      maxMsgRetryCount: 5,
       
-      // Configurações de conexão
       emitOwnEvents: false,
       fireInitQueries: true,
       generateHighQualityLinkPreview: true,
       syncFullHistory: false,
-      markOnlineOnConnect: false, // IMPORTANTE: evita conflito
-      shouldSyncHistoryMessage: () => false,
-      
-      // Desabilita verificação MAC
-      appStateMacVerification: {
-        patch: false,
-        snapshot: false
-      },
+      markOnlineOnConnect: true,
       
       getMessage: async () => undefined
     })
 
-    sock.ev.on('creds.update', async () => {
-      try {
-        await saveCreds()
-        console.log('💾 Credenciais salvas')
-      } catch (err) {
-        console.error('❌ Erro ao salvar credenciais:', err.message)
-      }
-    })
+    sock.ev.on('creds.update', saveCreds)
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type === 'notify') {
@@ -607,7 +635,6 @@ async function startBot() {
         status = 'qr'
         console.log('📱 ✅ QR Code gerado!')
         console.log(`🔗 Acesse: ${IS_PRODUCTION ? 'https://seu-app.onrender.com' : 'http://localhost:' + PORT}/qr`)
-        console.log('⚠️ IMPORTANTE: Desconecte outros WhatsApp Web antes de escanear!')
         return
       }
 
@@ -631,6 +658,7 @@ async function startBot() {
         console.log(`📱 ID: ${sock.user?.id}`)
         console.log(`👤 Nome: ${sock.user?.name || 'N/A'}`)
         console.log(`🆕 Nova sessão: ${isNewLogin ? 'Sim' : 'Não'}`)
+        console.log(`💾 Sessão persistida no Supabase`)
         console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
         console.log('='.repeat(50) + '\n')
         return
@@ -653,51 +681,27 @@ async function startBot() {
         sock = null
         isStarting = false
         
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut
+        const shouldReconnect = !isLoggedOut && reconnects < MAX_RECONNECTS
         
-        // Erro de conflito - comum após scan
-        const isConflictError = errorMsg?.includes('conflict') || statusCode === 440
-        
-        // Códigos críticos que exigem reset de sessão
-        const criticalErrorCodes = [515, 401, 428]
-        const shouldResetSession = criticalErrorCodes.includes(statusCode)
-
-        if (isConflictError) {
-          console.log('⚠️ ERRO DE CONFLITO DETECTADO!')
-          console.log('💡 Isso geralmente significa que há outra sessão ativa.')
-          console.log('💡 Aguardando 5 segundos antes de reconectar...')
-          lastError = 'Conflito - Outra sessão ativa'
-          status = 'conflict'
-          await sleep(5000)
-        } else if (shouldResetSession) {
-          console.log('🔄 Erro crítico detectado, limpando sessão...')
-          lastError = `Erro ${statusCode} - Sessão será resetada`
-          try {
-            if (fs.existsSync(SESSION_PATH)) {
-              fs.rmSync(SESSION_PATH, { recursive: true, force: true })
-              await sleep(1000)
-              fs.mkdirSync(SESSION_PATH, { recursive: true })
-              console.log('✅ Sessão limpa com sucesso')
-            }
-          } catch (err) {
-            console.error('❌ Erro ao limpar sessão:', err.message)
-          }
-        } else {
-          lastError = errorMsg || `Erro ${statusCode}`
+        if (isLoggedOut) {
+          status = 'logged_out'
+          lastError = 'Logout realizado'
+          console.log('🚪 Logout detectado - não reconectando\n')
+          return
         }
 
-        if (shouldReconnect && reconnects < MAX_RECONNECTS) {
+        if (shouldReconnect) {
           reconnects++
-          // Delay progressivo: 3s, 6s, 9s... até 30s
           const delay = Math.min(reconnects * 3000, 30000)
           status = 'reconnecting'
+          lastError = errorMsg || `Erro ${statusCode}`
           console.log(`🔄 Reconectando em ${delay/1000}s (tentativa ${reconnects}/${MAX_RECONNECTS})...\n`)
           setTimeout(startBot, delay)
         } else {
-          const finalStatus = statusCode === DisconnectReason.loggedOut ? 'logged_out' : 'stopped'
-          status = finalStatus
-          console.log(`🛑 Não reconectando: ${shouldReconnect ? 'Máximo de tentativas atingido' : 'Logout detectado'}`)
-          console.log(`Status final: ${finalStatus}\n`)
+          status = 'stopped'
+          lastError = 'Máximo de tentativas atingido'
+          console.log(`🛑 Máximo de tentativas atingido (${MAX_RECONNECTS})\n`)
         }
       }
     })
@@ -738,17 +742,18 @@ app.listen(PORT, () => {
   console.log(`  📱 QR Code:   http://localhost:${PORT}/qr`)
   console.log(`  ❤️  Health:    http://localhost:${PORT}/health`)
   console.log(`  🔄 Restart:   http://localhost:${PORT}/restart`)
+  console.log(`  🚪 Logout:    http://localhost:${PORT}/logout`)
   console.log('')
   console.log('  📦 Node:      ' + process.version)
   console.log('  🔧 Ambiente:  ' + (IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'))
+  console.log('  💾 Storage:   Supabase (' + SESSION_ID + ')')
   console.log('')
   console.log('═'.repeat(50))
-  console.log('\n⚠️ IMPORTANTE: Desconecte outros WhatsApp Web antes de escanear o QR!\n')
+  console.log('')
   
   setTimeout(startBot, 2000)
 })
 
-// Graceful shutdown
 const shutdown = async (signal) => {
   console.log(`\n🛑 ${signal} recebido, desligando gracefully...`)
   if (sock) {
