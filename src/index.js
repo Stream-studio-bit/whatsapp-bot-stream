@@ -21,15 +21,13 @@ const PORT = process.env.PORT || 3000
 
 const SESSION_PATH = './auth'
 const FORCE_NEW_SESSION = process.env.FORCE_NEW_SESSION === 'true'
-const MAX_RECONNECTS = 15
+const MAX_RECONNECTS = 20
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
-// Logger CORRIGIDO - sem transport em produção
-const logger = pino({ 
-  level: process.env.LOG_LEVEL || 'silent'
-})
+// Logger configurado
+const logger = pino({ level: 'silent' })
 
-// Cache para mensagens (essencial para evitar erro 515)
+// Cache para mensagens
 const msgRetryCounterCache = new NodeCache({ 
   stdTTL: 86400,
   checkperiod: 600
@@ -47,6 +45,7 @@ let sock = null
 let isStarting = false
 let connectionAttempts = 0
 let lastDisconnectTime = null
+let lastError = null
 
 /* =========================
    UTILITÁRIOS
@@ -66,7 +65,8 @@ function getStatusEmoji(currentStatus) {
     'reconnecting': '🔄',
     'error': '⚠️',
     'logged_out': '🚪',
-    'stopped': '🛑'
+    'stopped': '🛑',
+    'conflict': '⚠️'
   }
   return emojis[currentStatus] || '❓'
 }
@@ -105,7 +105,7 @@ app.get('/', (_, res) => {
           padding: 40px;
           border-radius: 20px;
           box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-          max-width: 500px;
+          max-width: 600px;
           width: 100%;
           animation: fadeIn 0.5s;
         }
@@ -124,7 +124,7 @@ app.get('/', (_, res) => {
           margin-bottom: 30px;
         }
         .status { 
-          font-size: 32px; 
+          font-size: 28px; 
           margin: 30px 0;
           font-weight: bold;
           padding: 20px;
@@ -133,7 +133,7 @@ app.get('/', (_, res) => {
         }
         .connected { color: #25D366; background: #d4edda; }
         .qr { color: #FFA500; background: #fff3cd; }
-        .disconnected, .error { color: #dc3545; background: #f8d7da; }
+        .disconnected, .error, .conflict { color: #dc3545; background: #f8d7da; }
         .init, .connecting, .reconnecting { color: #17a2b8; background: #d1ecf1; }
         .btn {
           display: inline-block;
@@ -191,6 +191,14 @@ app.get('/', (_, res) => {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
         }
+        .alert {
+          background: #fff3cd;
+          border-left: 5px solid #ffc107;
+          padding: 15px;
+          border-radius: 5px;
+          margin-top: 20px;
+          font-size: 14px;
+        }
       </style>
     </head>
     <body>
@@ -206,6 +214,7 @@ app.get('/', (_, res) => {
             status === 'reconnecting' ? 'Reconectando...' :
             status === 'init' ? 'Inicializando...' :
             status === 'logged_out' ? 'Desconectado (Logout)' :
+            status === 'conflict' ? 'Conflito - Reconectando...' :
             status.toUpperCase()
           }
         </div>
@@ -215,6 +224,8 @@ app.get('/', (_, res) => {
           <a href="/health" class="btn secondary">📊 Health Check</a>
           ${status !== 'connected' && status !== 'connecting' ? '<a href="/restart" class="btn secondary">🔄 Restart</a>' : ''}
         </div>
+        
+        ${lastError ? `<div class="alert"><strong>⚠️ Último erro:</strong> ${lastError}</div>` : ''}
         
         <div class="info">
           <div class="info-row">
@@ -255,6 +266,7 @@ app.get('/health', (_, res) => {
     node: process.version,
     memory: process.memoryUsage(),
     lastDisconnect: lastDisconnectTime,
+    lastError: lastError,
     environment: IS_PRODUCTION ? 'production' : 'development'
   })
 })
@@ -427,7 +439,7 @@ app.get('/qr', async (_, res) => {
           </ol>
         </div>
         <div class="warning">
-          <strong>⚠️ Importante:</strong> Mantenha esta página aberta até que a conexão seja confirmada. O QR Code será renovado automaticamente se expirar.
+          <strong>⚠️ IMPORTANTE:</strong> Se você já tem outro WhatsApp Web conectado, desconecte-o primeiro. Múltiplas conexões podem causar erro de conflito.
         </div>
       </div>
     </body>
@@ -478,6 +490,7 @@ app.get('/restart', async (_, res) => {
   reconnects = 0
   isStarting = false
   connectionAttempts = 0
+  lastError = null
   setTimeout(startBot, 2000)
 })
 
@@ -499,7 +512,7 @@ async function startBot() {
       console.log('Erro ao encerrar conexão:', err.message)
     }
     sock = null
-    await sleep(2000)
+    await sleep(3000) // Espera mais tempo antes de reconectar
   }
   
   isStarting = true
@@ -553,7 +566,7 @@ async function startBot() {
       fireInitQueries: true,
       generateHighQualityLinkPreview: true,
       syncFullHistory: false,
-      markOnlineOnConnect: true,
+      markOnlineOnConnect: false, // IMPORTANTE: evita conflito
       shouldSyncHistoryMessage: () => false,
       
       // Desabilita verificação MAC
@@ -586,7 +599,7 @@ async function startBot() {
     })
 
     sock.ev.on('connection.update', async (update) => {
-      const { connection, lastDisconnect, qr } = update
+      const { connection, lastDisconnect, qr, isNewLogin } = update
 
       if (qr) {
         qrCode = qr
@@ -594,6 +607,7 @@ async function startBot() {
         status = 'qr'
         console.log('📱 ✅ QR Code gerado!')
         console.log(`🔗 Acesse: ${IS_PRODUCTION ? 'https://seu-app.onrender.com' : 'http://localhost:' + PORT}/qr`)
+        console.log('⚠️ IMPORTANTE: Desconecte outros WhatsApp Web antes de escanear!')
         return
       }
 
@@ -608,6 +622,7 @@ async function startBot() {
         qrCode = null
         qrExpiry = null
         reconnects = 0
+        lastError = null
         isStarting = false
         
         console.log('\n' + '='.repeat(50))
@@ -615,6 +630,7 @@ async function startBot() {
         console.log('='.repeat(50))
         console.log(`📱 ID: ${sock.user?.id}`)
         console.log(`👤 Nome: ${sock.user?.name || 'N/A'}`)
+        console.log(`🆕 Nova sessão: ${isNewLogin ? 'Sim' : 'Não'}`)
         console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
         console.log('='.repeat(50) + '\n')
         return
@@ -623,13 +639,14 @@ async function startBot() {
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode
         const reason = lastDisconnect?.error?.output?.payload?.error
+        const errorMsg = lastDisconnect?.error?.message
         lastDisconnectTime = new Date().toISOString()
         
         console.log('\n' + '='.repeat(50))
         console.log('❌ CONEXÃO FECHADA')
         console.log('='.repeat(50))
         console.log(`📊 Status Code: ${statusCode}`)
-        console.log(`📊 Motivo: ${reason || lastDisconnect?.error?.message || 'Desconhecido'}`)
+        console.log(`📊 Motivo: ${reason || errorMsg || 'Desconhecido'}`)
         console.log(`⏰ ${new Date().toLocaleString('pt-BR')}`)
         console.log('='.repeat(50))
         
@@ -637,11 +654,24 @@ async function startBot() {
         isStarting = false
         
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
-        const criticalErrorCodes = [515, 440, 428, 401, 500]
-        const shouldResetSession = criticalErrorCodes.includes(statusCode) && reconnects < 3
+        
+        // Erro de conflito - comum após scan
+        const isConflictError = errorMsg?.includes('conflict') || statusCode === 440
+        
+        // Códigos críticos que exigem reset de sessão
+        const criticalErrorCodes = [515, 401, 428]
+        const shouldResetSession = criticalErrorCodes.includes(statusCode)
 
-        if (shouldResetSession) {
+        if (isConflictError) {
+          console.log('⚠️ ERRO DE CONFLITO DETECTADO!')
+          console.log('💡 Isso geralmente significa que há outra sessão ativa.')
+          console.log('💡 Aguardando 5 segundos antes de reconectar...')
+          lastError = 'Conflito - Outra sessão ativa'
+          status = 'conflict'
+          await sleep(5000)
+        } else if (shouldResetSession) {
           console.log('🔄 Erro crítico detectado, limpando sessão...')
+          lastError = `Erro ${statusCode} - Sessão será resetada`
           try {
             if (fs.existsSync(SESSION_PATH)) {
               fs.rmSync(SESSION_PATH, { recursive: true, force: true })
@@ -652,11 +682,14 @@ async function startBot() {
           } catch (err) {
             console.error('❌ Erro ao limpar sessão:', err.message)
           }
+        } else {
+          lastError = errorMsg || `Erro ${statusCode}`
         }
 
         if (shouldReconnect && reconnects < MAX_RECONNECTS) {
           reconnects++
-          const delay = Math.min(reconnects * 3000, 15000)
+          // Delay progressivo: 3s, 6s, 9s... até 30s
+          const delay = Math.min(reconnects * 3000, 30000)
           status = 'reconnecting'
           console.log(`🔄 Reconectando em ${delay/1000}s (tentativa ${reconnects}/${MAX_RECONNECTS})...\n`)
           setTimeout(startBot, delay)
@@ -677,6 +710,7 @@ async function startBot() {
     console.error('Stack:', error.stack)
     console.error('='.repeat(50) + '\n')
     
+    lastError = error.message
     isStarting = false
     sock = null
     status = 'error'
@@ -709,7 +743,7 @@ app.listen(PORT, () => {
   console.log('  🔧 Ambiente:  ' + (IS_PRODUCTION ? 'Produção' : 'Desenvolvimento'))
   console.log('')
   console.log('═'.repeat(50))
-  console.log('')
+  console.log('\n⚠️ IMPORTANTE: Desconecte outros WhatsApp Web antes de escanear o QR!\n')
   
   setTimeout(startBot, 2000)
 })
