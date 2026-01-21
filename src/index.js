@@ -8,7 +8,7 @@ import {
   Browsers
 } from '@whiskeysockets/baileys'
 import pino from 'pino'
-import { useSupabaseAuthState } from './supabaseAuthState.js'
+import { useSupabaseAuthState } from './services/supabaseAuthState.js'
 
 const app = express()
 const PORT = process.env.PORT || 3000
