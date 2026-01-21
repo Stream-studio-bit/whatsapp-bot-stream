@@ -1,53 +1,30 @@
-// Convertido para ES Modules
-
-/**
- * events.js
- * Gerencia todos os eventos do WhatsApp
- * - Nova mensagem
- * - Conexão / Reconexão
- * - QR Code
- * - Erros
- * - Status de conexão
- */
-
 import { DisconnectReason } from '@whiskeysockets/baileys';
 import logger from '../utils/logger.js';
 import messageController from '../controllers/messageController.js';
 
-/**
- * Registra todos os eventos do socket WhatsApp
- * @param {Object} sock - Socket do Baileys
- * @param {Function} onDisconnect - Callback para desconexão
- */
 export function registerEvents(sock, onDisconnect) {
   logger.info('Registrando eventos do WhatsApp...');
 
-  // Evento: Atualização de conexão
   sock.ev.on('connection.update', async (update) => {
     handleConnectionUpdate(update, onDisconnect);
   });
 
-  // Evento: Nova mensagem recebida
   sock.ev.on('messages.upsert', async (m) => {
-    const message = m.messages[0];
+    await handleNewMessage(sock, m);
   });
 
-  // Evento: Atualização de presença (online/offline/digitando)
   sock.ev.on('presence.update', (presence) => {
     handlePresenceUpdate(presence);
   });
 
-  // Evento: Atualização de grupos
   sock.ev.on('groups.update', (groups) => {
     handleGroupsUpdate(groups);
   });
 
-  // Evento: Participantes de grupo adicionados/removidos
   sock.ev.on('group-participants.update', (event) => {
     handleGroupParticipantsUpdate(event);
   });
 
-  // Evento: Bloqueio/desbloqueio de contatos
   sock.ev.on('blocklist.update', (blocklist) => {
     handleBlocklistUpdate(blocklist);
   });
@@ -55,21 +32,14 @@ export function registerEvents(sock, onDisconnect) {
   logger.info('✅ Eventos registrados com sucesso');
 }
 
-/**
- * Gerencia atualizações de conexão
- * @param {Object} update - Dados da atualização
- * @param {Function} onDisconnect - Callback de desconexão
- */
 function handleConnectionUpdate(update, onDisconnect) {
   const { connection, lastDisconnect, qr } = update;
 
-  // QR Code gerado (para primeira conexão)
   if (qr) {
     logger.info('📱 QR Code gerado. Escaneie com seu WhatsApp.');
     console.log('\n📳 QR CODE DISPONÍVEL NO TERMINAL\n');
   }
 
-  // Status de conexão alterado
   if (connection) {
     logger.info(`Status de conexão: ${connection}`);
 
@@ -93,18 +63,12 @@ function handleConnectionUpdate(update, onDisconnect) {
   }
 }
 
-/**
- * Processa desconexão e determina ação
- * @param {Object} lastDisconnect - Informações da última desconexão
- * @param {Function} onDisconnect - Callback de desconexão
- */
 function handleDisconnection(lastDisconnect, onDisconnect) {
   const statusCode = lastDisconnect?.error?.output?.statusCode;
   const reason = lastDisconnect?.error?.output?.payload?.error || 'Desconhecido';
 
   logger.warn(`Motivo da desconexão: ${reason} (Código: ${statusCode})`);
 
-  // Identifica o motivo específico
   let disconnectReason = DisconnectReason.connectionClosed;
 
   if (statusCode === 401) {
@@ -119,40 +83,28 @@ function handleDisconnection(lastDisconnect, onDisconnect) {
     disconnectReason = DisconnectReason.restartRequired;
   }
 
-  // Chama callback de desconexão
-  onDisconnect(disconnectReason);
+  if (onDisconnect) {
+    onDisconnect(disconnectReason);
+  }
 }
 
-/**
- * Processa novas mensagens recebidas
- * @param {Object} sock - Socket do WhatsApp
- * @param {Object} messageUpdate - Dados da mensagem
- */
 async function handleNewMessage(sock, messageUpdate) {
   try {
     const { messages, type } = messageUpdate;
 
-    // Apenas processa mensagens novas (não notificações)
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      // Ignora mensagens sem key (inválidas)
       if (!msg.key) continue;
-
-      // Ignora mensagens de status/transmissão
       if (msg.key.remoteJid === 'status@broadcast') continue;
-
-      // Ignora mensagens enviadas pelo próprio bot
       if (msg.key.fromMe) continue;
 
-      // Log da mensagem recebida
       const from = msg.key.remoteJid;
       const isGroup = from.endsWith('@g.us');
       const sender = isGroup ? msg.key.participant : from;
 
       logger.info(`📩 Nova mensagem de ${sender} ${isGroup ? `no grupo ${from}` : ''}`);
 
-      // Envia para o controller processar
       await messageController.processMessage(sock, msg);
     }
   } catch (error) {
@@ -160,14 +112,9 @@ async function handleNewMessage(sock, messageUpdate) {
   }
 }
 
-/**
- * Gerencia atualizações de presença
- * @param {Object} presence - Dados de presença
- */
 function handlePresenceUpdate(presence) {
   const { id, presences } = presence;
   
-  // Log apenas em modo debug para não poluir
   if (process.env.LOG_LEVEL === 'debug') {
     Object.keys(presences).forEach((jid) => {
       const status = presences[jid].lastKnownPresence;
@@ -176,20 +123,12 @@ function handlePresenceUpdate(presence) {
   }
 }
 
-/**
- * Gerencia atualizações de grupos
- * @param {Array} groups - Lista de grupos atualizados
- */
 function handleGroupsUpdate(groups) {
   groups.forEach((group) => {
     logger.debug(`Grupo atualizado: ${group.id} - ${group.subject || 'Sem nome'}`);
   });
 }
 
-/**
- * Gerencia atualizações de participantes em grupos
- * @param {Object} event - Evento de participantes
- */
 function handleGroupParticipantsUpdate(event) {
   const { id, participants, action } = event;
 
@@ -213,10 +152,6 @@ function handleGroupParticipantsUpdate(event) {
   });
 }
 
-/**
- * Gerencia atualizações de lista de bloqueio
- * @param {Object} blocklist - Lista de bloqueados
- */
 function handleBlocklistUpdate(blocklist) {
   const { blocklist: list } = blocklist;
   
@@ -225,11 +160,6 @@ function handleBlocklistUpdate(blocklist) {
   }
 }
 
-/**
- * Envia confirmação de leitura para uma mensagem
- * @param {Object} sock - Socket do WhatsApp
- * @param {Object} messageKey - Chave da mensagem
- */
 export async function sendReadReceipt(sock, messageKey) {
   try {
     await sock.readMessages([messageKey]);
@@ -239,12 +169,6 @@ export async function sendReadReceipt(sock, messageKey) {
   }
 }
 
-/**
- * Envia indicador de "digitando..."
- * @param {Object} sock - Socket do WhatsApp
- * @param {string} jid - JID do destinatário
- * @param {boolean} isTyping - Se está digitando
- */
 export async function sendTypingIndicator(sock, jid, isTyping = true) {
   try {
     await sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);

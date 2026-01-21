@@ -1,20 +1,8 @@
-// Convertido para ES Modules
-/**
- * 🗄️ SUPABASE CLIENT
- * Cliente direto para banco de dados Supabase
- * Usado pelos services e pelo ragEngine
- * 
- * Responsabilidades:
- * - Conectar com Supabase
- * - Fornecer interface para operações CRUD
- * - Gerenciar tabelas: conversations, blocked_users, whatsapp_sessions, knowledge_base
- */
-
 import { createClient } from '@supabase/supabase-js';
 import config from '../config/env.js';
 import logger from '../utils/logger.js';
 
-// Inicializa o cliente Supabase
+// Cliente padrão (anonKey) para operações gerais
 const supabase = createClient(config.supabase.url, config.supabase.anonKey, {
   auth: {
     persistSession: false,
@@ -22,13 +10,15 @@ const supabase = createClient(config.supabase.url, config.supabase.anonKey, {
   }
 });
 
-/**
- * 💬 CONVERSATIONS - Gerenciamento de conversas
- */
+// Cliente exclusivo para sessão WhatsApp (Service Role Key)
+const supabaseSession = createClient(config.supabase.url, config.supabase.serviceRoleKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false
+  }
+});
+
 const conversations = {
-  /**
-   * Cria nova conversa ou atualiza existente
-   */
   async create(data) {
     try {
       const { error } = await supabase
@@ -55,9 +45,6 @@ const conversations = {
     }
   },
 
-  /**
-   * Busca histórico de conversas de um usuário
-   */
   async getByUser(userJid, limit = 10) {
     try {
       const { data, error } = await supabase
@@ -75,9 +62,6 @@ const conversations = {
     }
   },
 
-  /**
-   * Busca conversas iniciadas pelo dono (owner_initiated = true)
-   */
   async getOwnerInitiated(aiActivated = null) {
     try {
       let query = supabase
@@ -99,9 +83,6 @@ const conversations = {
     }
   },
 
-  /**
-   * Ativa IA em conversa iniciada pelo dono
-   */
   async activateAI(userJid) {
     try {
       const { error } = await supabase
@@ -123,13 +104,7 @@ const conversations = {
   }
 };
 
-/**
- * 🚫 BLOCKED USERS - Gerenciamento de usuários bloqueados
- */
 const blockedUsers = {
-  /**
-   * Verifica se usuário está bloqueado
-   */
   async isBlocked(userJid) {
     try {
       const { data, error } = await supabase
@@ -138,7 +113,7 @@ const blockedUsers = {
         .eq('user_jid', userJid)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error; // PGRST116 = não encontrado
+      if (error && error.code !== 'PGRST116') throw error;
       return data ? data.is_blocked : false;
     } catch (error) {
       logger.error('❌ Erro ao verificar bloqueio:', error.message);
@@ -146,9 +121,6 @@ const blockedUsers = {
     }
   },
 
-  /**
-   * Bloqueia um usuário
-   */
   async block(userJid, blockedBy = 'System') {
     try {
       const { error } = await supabase
@@ -170,9 +142,6 @@ const blockedUsers = {
     }
   },
 
-  /**
-   * Desbloqueia um usuário
-   */
   async unblock(userJid) {
     try {
       const { error } = await supabase
@@ -192,9 +161,6 @@ const blockedUsers = {
     }
   },
 
-  /**
-   * Lista todos os usuários bloqueados
-   */
   async list() {
     try {
       const { data, error } = await supabase
@@ -212,17 +178,11 @@ const blockedUsers = {
   }
 };
 
-/**
- * 📱 WHATSAPP SESSIONS - Gerenciamento de sessões do WhatsApp
- */
 const sessions = {
-  /**
-   * Salva sessão do WhatsApp
-   */
   async save(sessionId, sessionData) {
     try {
-      const { error } = await supabase
-        .from('whatsapp_sessions')
+      const { error } = await supabaseSession
+        .from('whatsapp-sessions')
         .upsert({
           session_id: sessionId,
           session_data: sessionData,
@@ -238,13 +198,10 @@ const sessions = {
     }
   },
 
-  /**
-   * Recupera sessão do WhatsApp
-   */
   async load(sessionId) {
     try {
-      const { data, error } = await supabase
-        .from('whatsapp_sessions')
+      const { data, error } = await supabaseSession
+        .from('whatsapp-sessions')
         .select('session_data')
         .eq('session_id', sessionId)
         .single();
@@ -257,13 +214,10 @@ const sessions = {
     }
   },
 
-  /**
-   * Remove sessão do WhatsApp
-   */
   async delete(sessionId) {
     try {
-      const { error } = await supabase
-        .from('whatsapp_sessions')
+      const { error } = await supabaseSession
+        .from('whatsapp-sessions')
         .delete()
         .eq('session_id', sessionId);
 
@@ -277,16 +231,9 @@ const sessions = {
   }
 };
 
-/**
- * 📚 KNOWLEDGE BASE - Base de conhecimento para RAG
- */
 const knowledge = {
-  /**
-   * Busca documentos relevantes (usado pelo RAG)
-   */
   async search(query, limit = 5) {
     try {
-      // Busca simples por palavras-chave no título e conteúdo
       const { data, error } = await supabase
         .from('knowledge_base')
         .select('*')
@@ -301,9 +248,6 @@ const knowledge = {
     }
   },
 
-  /**
-   * Lista toda a base de conhecimento
-   */
   async listAll() {
     try {
       const { data, error } = await supabase
@@ -319,9 +263,6 @@ const knowledge = {
     }
   },
 
-  /**
-   * Adiciona novo documento à base
-   */
   async add(title, content, category = 'geral') {
     try {
       const { error } = await supabase
@@ -342,9 +283,6 @@ const knowledge = {
   }
 };
 
-/**
- * 🧪 Testa conexão com Supabase
- */
 async function testConnection() {
   try {
     const { error } = await supabase.from('conversations').select('count').limit(1);
@@ -359,6 +297,7 @@ async function testConnection() {
 
 export {
   supabase,
+  supabaseSession,
   conversations,
   blockedUsers,
   sessions,

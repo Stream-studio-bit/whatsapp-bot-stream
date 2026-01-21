@@ -4,14 +4,15 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // ==========================================
-// CONFIGURAÇÃO SUPABASE
+// CONFIGURAÇÃO SUPABASE - SERVICE ROLE ONLY
 // ==========================================
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 /**
  * Valida configurações do Supabase
+ * CRÍTICO: Apenas Service Role Key é aceita
  * @returns {boolean}
  */
 export function validateSupabaseConfig() {
@@ -20,8 +21,9 @@ export function validateSupabaseConfig() {
     return false;
   }
 
-  if (!SUPABASE_ANON_KEY) {
-    console.error('❌ SUPABASE_ANON_KEY não configurado no .env');
+  if (!SUPABASE_SERVICE_ROLE_KEY) {
+    console.error('❌ SUPABASE_SERVICE_ROLE_KEY não configurado no .env');
+    console.error('⚠️  ANON_KEY NÃO é suportada para sessões WhatsApp');
     return false;
   }
 
@@ -37,7 +39,8 @@ export function validateSupabaseConfig() {
 }
 
 /**
- * Cria cliente Supabase
+ * Cria cliente Supabase com Service Role Key
+ * CRÍTICO: Bypass de RLS necessário para Storage de sessão
  * @returns {SupabaseClient}
  */
 export function createSupabaseClient() {
@@ -45,31 +48,52 @@ export function createSupabaseClient() {
     throw new Error('Configuração Supabase inválida');
   }
 
-  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: {
       persistSession: false,
       autoRefreshToken: false
+    },
+    db: {
+      schema: 'public'
     }
   });
 }
 
 /**
- * Testa conexão com Supabase
+ * Testa conexão com Supabase e operações de Storage
  * @param {SupabaseClient} supabase 
  * @returns {Promise<boolean>}
  */
 export async function testSupabaseConnection(supabase) {
   try {
-    // Tenta listar buckets para testar conexão
-    const { data, error } = await supabase.storage.listBuckets();
+    // Teste 1: Listar buckets
+    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
     
-    if (error) {
-      console.error('❌ Erro ao conectar Supabase:', error.message);
+    if (listError) {
+      console.error('❌ Erro ao conectar Supabase:', listError.message);
       return false;
     }
 
+    // Teste 2: Operação real de Storage (upload + delete teste)
+    const testFile = Buffer.from('test');
+    const testPath = 'test-connection.txt';
+    
+    const { error: uploadError } = await supabase.storage
+      .from('whatsapp-sessions')
+      .upload(testPath, testFile, { upsert: true });
+    
+    if (uploadError && uploadError.message !== 'The resource already exists') {
+      console.error('❌ Erro ao testar upload:', uploadError.message);
+      return false;
+    }
+
+    // Limpa arquivo de teste
+    await supabase.storage
+      .from('whatsapp-sessions')
+      .remove([testPath]);
+
     console.log('✅ Supabase conectado com sucesso');
-    console.log(`📦 Buckets disponíveis: ${data.length}`);
+    console.log(`📦 Buckets disponíveis: ${buckets.length}`);
     return true;
   } catch (err) {
     console.error('❌ Erro ao testar Supabase:', err.message);

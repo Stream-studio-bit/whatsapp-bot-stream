@@ -1,14 +1,6 @@
-// Convertido para ES Modules
-
-/**
- * client.js
- * Cria e gerencia o cliente Baileys
- * Compatível com Render (Web Service Free)
- */
-
 import makeWASocket, {
-  useMultiFileAuthState,
   DisconnectReason,
+  fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
@@ -21,7 +13,7 @@ import {
   baileysConfig,
 } from '../config/baileys.js';
 
-import { saveSession, loadSession } from './sessionStore.js';
+import { useSupabaseAuthState } from './sessionStore.js';
 import { registerEvents } from './events.js';
 import logger from '../utils/logger.js';
 
@@ -30,9 +22,6 @@ let reconnectAttempt = 0;
 let reconnectTimeout = null;
 let isConnecting = false;
 
-/**
- * Cria e inicializa o cliente WhatsApp
- */
 export async function createWhatsAppClient() {
   try {
     if (isConnecting) {
@@ -43,23 +32,23 @@ export async function createWhatsAppClient() {
     isConnecting = true;
     logger.info('🚀 Iniciando cliente WhatsApp...');
 
-    // Estado de autenticação (filesystem)
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_info');
+    const { version } = await fetchLatestBaileysVersion();
+    const authState = useSupabaseAuthState();
 
-    // (Opcional) tentativa de restaurar sessão externa
-    try {
-      const restored = await loadSession();
-      if (restored) {
-        logger.info('📂 Sessão restaurada do Supabase');
-      }
-    } catch (err) {
-      logger.warn('⚠️ Nenhuma sessão externa encontrada');
-    }
+    const creds = await authState.loadCreds();
+    const keys = await authState.loadKeys();
 
-    // Cria socket
-    sock = makeWASocket(getBaileysSocketConfig(state));
+    const state = {
+      creds: creds || undefined,
+      keys: keys || {}
+    };
 
-    // QR Code compacto (LOG)
+    sock = makeWASocket({
+      ...getBaileysSocketConfig(state),
+      version,
+      auth: state
+    });
+
     sock.ev.on('connection.update', (update) => {
       const { qr, connection, lastDisconnect } = update;
 
@@ -68,7 +57,6 @@ export async function createWhatsAppClient() {
         logger.info('📲 Escaneie o QR Code abaixo:\n');
         qrcode.generate(qr, { small: true });
 
-        // fallback seguro
         logger.info(
           '🔗 Fallback QR link:\n' +
             'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' +
@@ -90,18 +78,22 @@ export async function createWhatsAppClient() {
       }
     });
 
-    // Salva credenciais automaticamente
     sock.ev.on('creds.update', async () => {
       try {
-        await saveCreds();
-        await saveSession(state);
-        logger.debug('💾 Credenciais salvas');
+        if (sock.authState?.creds) {
+          useSupabaseAuthState.state.creds = sock.authState.creds;
+          await authState.saveCreds();
+        }
+        if (sock.authState?.keys) {
+          useSupabaseAuthState.state.keys = sock.authState.keys;
+          await authState.saveKeys();
+        }
+        logger.debug('💾 Credenciais salvas no Supabase');
       } catch (err) {
         logger.error('Erro ao salvar credenciais', err);
       }
     });
 
-    // Registra handlers de mensagens/eventos
     registerEvents(sock);
 
     isConnecting = false;
@@ -113,9 +105,6 @@ export async function createWhatsAppClient() {
   }
 }
 
-/**
- * Gerencia reconexão
- */
 async function handleDisconnect(reason) {
   const message = getDisconnectMessage(reason);
   logger.warn(`🔌 Desconectado: ${message}`);
@@ -152,9 +141,6 @@ async function handleDisconnect(reason) {
   }, delay);
 }
 
-/**
- * Utilitários
- */
 export function getWhatsAppSocket() {
   return sock;
 }
