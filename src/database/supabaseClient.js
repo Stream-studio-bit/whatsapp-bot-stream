@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import config from '../config/env.js';
 import logger from '../utils/logger.js';
 
-// Cliente padrão (anonKey) para operações gerais
+// ✅ Cliente padrão (anonKey) para operações gerais (conversas, knowledge, etc)
 const supabase = createClient(config.supabase.url, config.supabase.anonKey, {
   auth: {
     persistSession: false,
@@ -10,7 +10,7 @@ const supabase = createClient(config.supabase.url, config.supabase.anonKey, {
   }
 });
 
-// Cliente exclusivo para sessão WhatsApp (Service Role Key)
+// ✅ Cliente exclusivo para sessão WhatsApp (Service Role Key - SEM RLS)
 const supabaseSession = createClient(config.supabase.url, config.supabase.serviceRoleKey, {
   auth: {
     persistSession: false,
@@ -178,59 +178,6 @@ const blockedUsers = {
   }
 };
 
-const sessions = {
-  async save(sessionId, sessionData) {
-    try {
-      const { error } = await supabaseSession
-        .from('whatsapp-sessions')
-        .upsert({
-          session_id: sessionId,
-          session_data: sessionData,
-          updated_at: new Date().toISOString()
-        });
-
-      if (error) throw error;
-      logger.info(`💾 Sessão salva: ${sessionId}`);
-      return { success: true };
-    } catch (error) {
-      logger.error('❌ Erro ao salvar sessão:', error.message);
-      return { success: false, error: error.message };
-    }
-  },
-
-  async load(sessionId) {
-    try {
-      const { data, error } = await supabaseSession
-        .from('whatsapp-sessions')
-        .select('session_data')
-        .eq('session_id', sessionId)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-      return data ? { success: true, data: data.session_data } : { success: false, data: null };
-    } catch (error) {
-      logger.error('❌ Erro ao carregar sessão:', error.message);
-      return { success: false, error: error.message, data: null };
-    }
-  },
-
-  async delete(sessionId) {
-    try {
-      const { error } = await supabaseSession
-        .from('whatsapp-sessions')
-        .delete()
-        .eq('session_id', sessionId);
-
-      if (error) throw error;
-      logger.info(`🗑️ Sessão removida: ${sessionId}`);
-      return { success: true };
-    } catch (error) {
-      logger.error('❌ Erro ao remover sessão:', error.message);
-      return { success: false, error: error.message };
-    }
-  }
-};
-
 const knowledge = {
   async search(query, limit = 5) {
     try {
@@ -300,7 +247,6 @@ export {
   supabaseSession,
   conversations,
   blockedUsers,
-  sessions,
   knowledge,
   testConnection
 };

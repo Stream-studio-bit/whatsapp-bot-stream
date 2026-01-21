@@ -2,9 +2,10 @@ import { initAuthCreds, BufferJSON } from '@whiskeysockets/baileys';
 
 /**
  * Auth state para Baileys usando Supabase Storage
+ * BUCKET: WHATSAPP-SESSIONS (maiúsculo conforme Supabase)
  */
 export async function useSupabaseAuthState(supabase, sessionId) {
-  const BUCKET = 'whatsapp-sessions';
+  const BUCKET = 'WHATSAPP-SESSIONS'; // ✅ MAIÚSCULO
   const CREDS_FILE = `${sessionId}/creds.json`;
   const KEYS_PREFIX = `${sessionId}/keys/`;
   
@@ -16,11 +17,12 @@ export async function useSupabaseAuthState(supabase, sessionId) {
         .download(CREDS_FILE);
       
       if (error) {
-        console.log('📝 Nenhuma credencial encontrada');
+        console.log('🔍 Nenhuma credencial encontrada - primeira execução');
         return null;
       }
       
       const text = await data.text();
+      console.log('✅ Credenciais carregadas do Supabase');
       return JSON.parse(text, BufferJSON.reviver);
     } catch (err) {
       console.error('❌ Erro ao ler credenciais:', err.message);
@@ -42,6 +44,7 @@ export async function useSupabaseAuthState(supabase, sessionId) {
         });
       
       if (error) throw error;
+      console.log('💾 Credenciais salvas no Supabase');
     } catch (err) {
       console.error('❌ Erro ao salvar credenciais:', err.message);
       throw err;
@@ -95,6 +98,7 @@ export async function useSupabaseAuthState(supabase, sessionId) {
   // Inicializa credenciais
   let creds = await readCreds();
   if (!creds) {
+    console.log('🆕 Criando novas credenciais...');
     creds = initAuthCreds();
     await writeCreds(creds);
   }

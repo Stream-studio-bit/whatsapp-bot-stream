@@ -13,9 +13,13 @@ import {
   baileysConfig,
 } from '../config/baileys.js';
 
-import { useSupabaseAuthState } from './sessionStore.js';
+// ✅ IMPORTAÇÃO CORRIGIDA
+import { useSupabaseAuthState } from './supabaseAuthState.js';
+import { supabaseSession } from '../database/supabaseClient.js';
 import { registerEvents } from './events.js';
 import logger from '../utils/logger.js';
+
+const SESSION_ID = process.env.SESSION_ID || 'omniwa_bot_session';
 
 let sock = null;
 let reconnectAttempt = 0;
@@ -33,21 +37,18 @@ export async function createWhatsAppClient() {
     logger.info('🚀 Iniciando cliente WhatsApp...');
 
     const { version } = await fetchLatestBaileysVersion();
-    const authState = useSupabaseAuthState();
-
-    const creds = await authState.loadCreds();
-    const keys = await authState.loadKeys();
-
-    const state = {
-      creds: creds || undefined,
-      keys: keys || {}
-    };
+    
+    // ✅ USA A IMPLEMENTAÇÃO CORRETA
+    const { state, saveCreds } = await useSupabaseAuthState(supabaseSession, SESSION_ID);
 
     sock = makeWASocket({
       ...getBaileysSocketConfig(state),
       version,
       auth: state
     });
+
+    // ✅ SALVA CREDENCIAIS CORRETAMENTE
+    sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
       const { qr, connection, lastDisconnect } = update;
@@ -67,9 +68,11 @@ export async function createWhatsAppClient() {
       if (connection === 'open') {
         logger.info('✅ WhatsApp conectado com sucesso');
         reconnectAttempt = 0;
+        isConnecting = false;
       }
 
       if (connection === 'close') {
+        isConnecting = false;
         const reason =
           lastDisconnect?.error?.output?.statusCode ??
           DisconnectReason.unknown;
@@ -78,25 +81,8 @@ export async function createWhatsAppClient() {
       }
     });
 
-    sock.ev.on('creds.update', async () => {
-      try {
-        if (sock.authState?.creds) {
-          useSupabaseAuthState.state.creds = sock.authState.creds;
-          await authState.saveCreds();
-        }
-        if (sock.authState?.keys) {
-          useSupabaseAuthState.state.keys = sock.authState.keys;
-          await authState.saveKeys();
-        }
-        logger.debug('💾 Credenciais salvas no Supabase');
-      } catch (err) {
-        logger.error('Erro ao salvar credenciais', err);
-      }
-    });
-
     registerEvents(sock);
 
-    isConnecting = false;
     return sock;
   } catch (error) {
     isConnecting = false;

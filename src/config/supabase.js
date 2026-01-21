@@ -79,7 +79,7 @@ export async function testSupabaseConnection(supabase) {
     const testPath = 'test-connection.txt';
     
     const { error: uploadError } = await supabase.storage
-      .from('whatsapp-sessions')
+      .from('WHATSAPP-SESSIONS') // ✅ MAIÚSCULO
       .upload(testPath, testFile, { upsert: true });
     
     if (uploadError && uploadError.message !== 'The resource already exists') {
@@ -89,7 +89,7 @@ export async function testSupabaseConnection(supabase) {
 
     // Limpa arquivo de teste
     await supabase.storage
-      .from('whatsapp-sessions')
+      .from('WHATSAPP-SESSIONS') // ✅ MAIÚSCULO
       .remove([testPath]);
 
     console.log('✅ Supabase conectado com sucesso');
@@ -107,7 +107,7 @@ export async function testSupabaseConnection(supabase) {
  * @param {string} bucketName 
  * @returns {Promise<boolean>}
  */
-export async function ensureBucketExists(supabase, bucketName = 'whatsapp-sessions') {
+export async function ensureBucketExists(supabase, bucketName = 'WHATSAPP-SESSIONS') {
   try {
     // Lista buckets
     const { data: buckets, error: listError } = await supabase.storage.listBuckets();
