@@ -2,10 +2,10 @@ import { initAuthCreds, BufferJSON } from '@whiskeysockets/baileys';
 
 /**
  * Auth state para Baileys usando Supabase Storage
- * BUCKET: WHATSAPP-SESSIONS (maiúsculo conforme Supabase)
+ * BUCKET: whatsapp-sessions (minúsculo conforme Supabase)
  */
 export async function useSupabaseAuthState(supabase, sessionId) {
-  const BUCKET = 'WHATSAPP-SESSIONS'; // ✅ MAIÚSCULO
+  const BUCKET = 'whatsapp-sessions'; 
   const CREDS_FILE = `${sessionId}/creds.json`;
   const KEYS_PREFIX = `${sessionId}/keys/`;
   
